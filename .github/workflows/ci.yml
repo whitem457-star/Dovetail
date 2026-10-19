@@ -1,0 +1,124 @@
+# Everything build.sh checks: page, web tests, JVM tests, lint, a release APK and app bundle, and the permission check.
+# On main (pushed or run by hand) it also signs the APK and the app bundle (for Google Play) with the release key from
+# the repository's secrets (PAYDAY_KEYSTORE_BASE64, PAYDAY_KEYSTORE_PASS), checks both are signed with the same
+# certificate as every earlier release, and attaches them to the run as Dovetail-v<version>. Other branches never see the key.
+name: CI
+
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      HAS_KEY: ${{ secrets.PAYDAY_KEYSTORE_BASE64 != '' && secrets.PAYDAY_KEYSTORE_PASS != '' }}
+      # SHA-256 of the release certificate (CN=Payday Transfers), the same in every release so far.
+      PAYDAY_CERT_SHA256: 030edfd0c5aad7ea3f09693f8666be56ba1aba1083662cfc2db9e9009698dc39
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # the update tests build the old releases from their commits
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21   # Robolectric needs Java 21 for Android 35+; the app itself still targets Java 17
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tests/package-lock.json
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Android SDK (platform 36, build-tools 36.0.0)
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" > /dev/null
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+
+      - name: Build the page
+        run: ./gradlew --no-daemon :app:generatePaydayPage
+
+      - name: Web tests
+        working-directory: tests
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+          npm test
+
+      - name: JVM tests, lint, an unsigned release APK and app bundle
+        run: ./gradlew --no-daemon :app:testReleaseUnitTest :app:lintRelease :app:assembleRelease :app:bundleRelease
+
+      - name: Permissions (no INTERNET, ever)
+        run: |
+          APK=app/build/outputs/apk/release/app-release-unsigned.apk
+          AAPT2="$ANDROID_HOME/build-tools/36.0.0/aapt2"
+          # Each manifest is read in full first and checked, so a failed read can never pass as "no INTERNET".
+          BADGING=$("$AAPT2" dump badging "$APK")
+          grep -q "package: name='uk.whiteboard.payday'" <<<"$BADGING" || { echo "ERROR: couldn't read the APK's manifest" >&2; exit 1; }
+          grep -E "^package|uses-permission" <<<"$BADGING"
+          if grep -q "android.permission.INTERNET" <<<"$BADGING"; then echo "ERROR: INTERNET permission found" >&2; exit 1; fi
+          AAB=app/build/outputs/bundle/release/app-release.aab
+          unzip -p "$AAB" base/manifest/AndroidManifest.xml > "$RUNNER_TEMP/aab-manifest"
+          grep -aq "android.permission.USE_BIOMETRIC" "$RUNNER_TEMP/aab-manifest" || { echo "ERROR: couldn't read the app bundle's manifest" >&2; exit 1; }
+          if grep -aq "android.permission.INTERNET" "$RUNNER_TEMP/aab-manifest"; then echo "ERROR: INTERNET permission found in the app bundle" >&2; exit 1; fi
+
+      - name: Signed release APK and app bundle
+        id: signed
+        if: env.HAS_KEY == 'true' && github.ref == 'refs/heads/main'
+        env:
+          PAYDAY_KEYSTORE_BASE64: ${{ secrets.PAYDAY_KEYSTORE_BASE64 }}
+          PAYDAY_KEYSTORE_PASS: ${{ secrets.PAYDAY_KEYSTORE_PASS }}
+        run: |
+          export PAYDAY_KEYSTORE="$RUNNER_TEMP/payday-release.jks"
+          trap 'rm -f "$PAYDAY_KEYSTORE"' EXIT
+          printf '%s' "$PAYDAY_KEYSTORE_BASE64" | base64 -d > "$PAYDAY_KEYSTORE"
+          ./gradlew --no-daemon :app:assembleRelease :app:bundleRelease
+          APK=app/build/outputs/apk/release/app-release.apk
+          AAB=app/build/outputs/bundle/release/app-release.aab
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          CERT=$("$BT/apksigner" verify --print-certs "$APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+          if [ "$CERT" != "$PAYDAY_CERT_SHA256" ]; then echo "ERROR: signed with a different certificate ($CERT); it wouldn't install over Dovetail" >&2; exit 1; fi
+          BADGING=$("$BT/aapt2" dump badging "$APK")
+          grep -q "package: name='uk.whiteboard.payday'" <<<"$BADGING" || { echo "ERROR: couldn't read the APK's manifest" >&2; exit 1; }
+          if grep -q "android.permission.INTERNET" <<<"$BADGING"; then echo "ERROR: INTERNET permission found" >&2; exit 1; fi
+          AAB_CERT=$(keytool -printcert -jarfile "$AAB" 2>/dev/null | sed -n 's/^[[:space:]]*SHA256: //p' | tr -d ':' | tr 'A-F' 'a-f')
+          if [ "$AAB_CERT" != "$PAYDAY_CERT_SHA256" ]; then echo "ERROR: the app bundle is signed with a different certificate ($AAB_CERT)" >&2; exit 1; fi
+          unzip -p "$AAB" base/manifest/AndroidManifest.xml > "$RUNNER_TEMP/aab-manifest"
+          grep -aq "android.permission.USE_BIOMETRIC" "$RUNNER_TEMP/aab-manifest" || { echo "ERROR: couldn't read the app bundle's manifest" >&2; exit 1; }
+          if grep -aq "android.permission.INTERNET" "$RUNNER_TEMP/aab-manifest"; then echo "ERROR: INTERNET permission found in the app bundle" >&2; exit 1; fi
+          VERSION=$(sed -n "s/.*versionName='\([^']*\)'.*/\1/p" <<<"$BADGING")
+          mkdir -p signed && cp "$APK" "signed/Dovetail-v$VERSION.apk" && cp "$AAB" "signed/Dovetail-v$VERSION.aab"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Signed Dovetail $VERSION (APK, and the app bundle for Google Play) with the release certificate" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Attach the signed APK and app bundle
+        if: steps.signed.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Dovetail-v${{ steps.signed.outputs.version }}
+          path: |
+            signed/Dovetail-v${{ steps.signed.outputs.version }}.apk
+            signed/Dovetail-v${{ steps.signed.outputs.version }}.aab
+          retention-days: 90
+
+      - name: Reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports
+          path: |
+            app/build/reports/
+            tests/shots/
+          if-no-files-found: ignore

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 10 and 11: only the app's JSON backups go to Google backup, and only when the backup is
+     end-to-end encrypted with the phone's screen lock. WebView storage and settings are left out. -->
+<full-backup-content>
+    <include domain="file" path="backups/" requireFlags="clientSideEncryption" />
+</full-backup-content>

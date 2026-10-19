@@ -1,0 +1,430 @@
+{
+ "app": "payday-transfers",
+ "version": 3,
+ "savedAt": "2026-10-15T12:00:00.000Z",
+ "config": {
+  "bills": [
+   {
+    "id": "b4",
+    "name": "Water",
+    "amount": 48,
+    "account": "cur1",
+    "months": []
+   },
+   {
+    "id": "b5",
+    "name": "Spotify",
+    "amount": 11.99,
+    "account": "cur1",
+    "months": []
+   },
+   {
+    "id": "b6",
+    "name": "Kestrel home",
+    "amount": 142.18,
+    "account": "cur1",
+    "months": [
+     12
+    ],
+    "renews": "2026-12-03",
+    "lead": 30
+   },
+   {
+    "id": "b7",
+    "name": "Life insurance",
+    "amount": 21.4,
+    "account": "cur1",
+    "months": []
+   },
+   {
+    "id": "b8",
+    "name": "TCU",
+    "amount": 18.5,
+    "account": "cur1",
+    "months": []
+   },
+   {
+    "id": "b9",
+    "name": "Kitty",
+    "amount": 27,
+    "account": "cur1",
+    "months": []
+   },
+   {
+    "id": "b10",
+    "name": "Credit card",
+    "amount": 150,
+    "account": "cur1",
+    "months": []
+   },
+   {
+    "id": "b11",
+    "name": "Linkway Media",
+    "amount": 39.99,
+    "account": "cur1",
+    "months": [],
+    "renews": "2027-08-12",
+    "lead": 30
+   },
+   {
+    "id": "b17",
+    "name": "Allowance",
+    "amount": 24.5,
+    "account": "cur2",
+    "months": []
+   },
+   {
+    "id": "b18",
+    "name": "PSA",
+    "amount": 16.25,
+    "account": "cur2",
+    "months": []
+   },
+   {
+    "id": "b24",
+    "name": "TV Licence",
+    "amount": 43.64,
+    "account": "jbills",
+    "months": [
+     2,
+     5,
+     8,
+     11
+    ]
+   },
+   {
+    "id": "b25",
+    "name": "Council Tax",
+    "amount": 198,
+    "account": "jbills",
+    "months": [
+     1,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11,
+     12
+    ]
+   },
+   {
+    "id": "b26",
+    "name": "Drivebox Sam",
+    "amount": 1.99,
+    "account": "jbills",
+    "months": []
+   },
+   {
+    "id": "b27",
+    "name": "Car insurance 1",
+    "amount": 31.2,
+    "account": "jbills",
+    "months": [],
+    "renews": "2027-08-14",
+    "lead": 30
+   },
+   {
+    "id": "b28",
+    "name": "Junior ISA",
+    "amount": 50,
+    "account": "jbills",
+    "months": [],
+    "savings": true
+   },
+   {
+    "id": "b29",
+    "name": "Hearth & Co",
+    "amount": 62.5,
+    "account": "jbills",
+    "months": []
+   },
+   {
+    "id": "b30",
+    "name": "Car tax 1",
+    "amount": 15.75,
+    "account": "jbills",
+    "months": []
+   },
+   {
+    "id": "b31",
+    "name": "Car tax 2",
+    "amount": 21.3,
+    "account": "jbills",
+    "months": []
+   },
+   {
+    "id": "b32",
+    "name": "Leisure Centre",
+    "amount": 34,
+    "account": "jbills",
+    "months": [],
+    "renews": "2026-04-12",
+    "lead": 30
+   },
+   {
+    "id": "b33",
+    "name": "Car insurance 2",
+    "amount": 38.9,
+    "account": "jbills",
+    "months": [],
+    "renews": "2027-02-06",
+    "lead": 30
+   },
+   {
+    "id": "b34",
+    "name": "Lumen",
+    "amount": 118.4,
+    "account": "jbills",
+    "months": [],
+    "renews": "2026-12-18",
+    "lead": 45
+   },
+   {
+    "id": "b35",
+    "name": "Fitzroy",
+    "amount": 42,
+    "account": "jbills",
+    "months": [],
+    "renews": "2027-07-09",
+    "lead": 30
+   },
+   {
+    "id": "b36",
+    "name": "Mortgage 1",
+    "amount": 865.2,
+    "account": "jbills",
+    "months": []
+   },
+   {
+    "id": "b37",
+    "name": "Mortgage 2",
+    "amount": 96.5,
+    "account": "jbills",
+    "months": []
+   },
+   {
+    "id": "b38",
+    "name": "Amazon Prime",
+    "amount": 8.99,
+    "account": "jbills",
+    "months": []
+   },
+   {
+    "id": "b39",
+    "name": "Drivebox Alex",
+    "amount": 2.99,
+    "account": "jbills",
+    "months": []
+   },
+   {
+    "id": "b40",
+    "name": "Health cash plan",
+    "amount": 18.6,
+    "account": "jbills",
+    "months": [],
+    "renews": "2027-04-03",
+    "lead": 30
+   },
+   {
+    "id": "b41",
+    "name": "Netflix",
+    "amount": 12.99,
+    "account": "jbills",
+    "months": []
+   },
+   {
+    "id": "b47",
+    "name": "Disney+",
+    "amount": 9.99,
+    "account": "jspend",
+    "months": []
+   },
+   {
+    "id": "b48",
+    "name": "Kite Alex",
+    "amount": 12,
+    "account": "jspend",
+    "months": []
+   },
+   {
+    "id": "b49",
+    "name": "Kite Sam",
+    "amount": 8,
+    "account": "jspend",
+    "months": []
+   }
+  ],
+  "income": [
+   {
+    "name": "Child Benefit",
+    "amount": 102.4,
+    "account": "jbills"
+   },
+   {
+    "name": "Grandparent (Junior ISA gift)",
+    "amount": 25,
+    "account": "jspend"
+   }
+  ],
+  "budget": {
+   "food": 550,
+   "fuel": 220,
+   "general": 1010
+  },
+  "savings": [
+   {
+    "name": "Stocks and shares ISA",
+    "amount": 200,
+    "account": "isa",
+    "id": "sisa01"
+   },
+   {
+    "name": "Holiday savings",
+    "amount": 250,
+    "account": "holiday",
+    "id": "shol01"
+   }
+  ],
+  "defaultPay": {
+   "alex": 2280,
+   "sam": 2140
+  },
+  "reminders": [
+   {
+    "id": "rcar1",
+    "name": "Car 1 MOT",
+    "date": "2027-01-09",
+    "lead": 30,
+    "yearly": true
+   },
+   {
+    "id": "rcar2",
+    "name": "Car 2 MOT",
+    "date": "2027-03-11",
+    "lead": 30,
+    "yearly": true
+   }
+  ],
+  "doneLog": [],
+  "payday": {},
+  "v12": true,
+  "schema": 3
+ },
+ "months": {
+  "2026-10": {
+   "month": "2026-10",
+   "alex": 2291.46,
+   "sam": 2128.73,
+   "overdraft": 95,
+   "done": {
+    "sam": 2087.98,
+    "jbjs": 2535.65,
+    "sav:sisa01": 200
+   },
+   "results": {
+    "sam": 2087.98,
+    "alex": 1974.58,
+    "jbillsToJspend": 2545.65,
+    "float": 215.66
+   },
+   "updatedAt": "2026-10-15T12:00:00.000Z"
+  }
+ },
+ "wealth": {
+  "accounts": [
+   {
+    "id": "isa",
+    "name": "Stocks and shares ISA",
+    "type": "isa",
+    "owner": "Alex",
+    "inNW": true,
+    "contrib": 0
+   },
+   {
+    "id": "pension",
+    "name": "Personal pension",
+    "type": "sipp",
+    "owner": "Alex",
+    "inNW": true,
+    "contrib": 0,
+    "relief": true
+   },
+   {
+    "id": "efund",
+    "name": "Emergency fund",
+    "type": "cash",
+    "owner": "Joint",
+    "inNW": true,
+    "emergency": true
+   },
+   {
+    "id": "holiday",
+    "name": "Holiday savings",
+    "type": "cash",
+    "owner": "Joint",
+    "inNW": true
+   },
+   {
+    "id": "home",
+    "name": "Home (estimated value)",
+    "type": "property",
+    "owner": "Joint",
+    "inNW": true
+   },
+   {
+    "id": "mort1",
+    "name": "Mortgage 1",
+    "type": "mortgage",
+    "owner": "Joint",
+    "inNW": true,
+    "payment": 865.2,
+    "dealEnd": "2027-09-30",
+    "lead": 180,
+    "billId": "b36"
+   },
+   {
+    "id": "mort2",
+    "name": "Mortgage 2",
+    "type": "mortgage",
+    "owner": "Joint",
+    "inNW": true,
+    "payment": 96.5,
+    "dealEnd": "2028-01-15",
+    "lead": 180,
+    "billId": "b37"
+   },
+   {
+    "id": "card",
+    "name": "Credit card",
+    "type": "debt",
+    "owner": "Alex",
+    "inNW": true,
+    "payment": 150,
+    "billId": "b10"
+   },
+   {
+    "id": "sofa",
+    "name": "Hearth & Co finance",
+    "type": "debt",
+    "owner": "Joint",
+    "inNW": true,
+    "payment": 62.5,
+    "billId": "b29"
+   },
+   {
+    "id": "junior",
+    "name": "Junior ISA",
+    "type": "child",
+    "owner": "Child",
+    "inNW": false,
+    "contrib": 50
+   }
+  ],
+  "snaps": {},
+  "isaAllowance": 20000,
+  "isaPrior": {}
+ }
+}

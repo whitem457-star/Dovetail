@@ -1,0 +1,15 @@
+# Secrets: never commit
+*.jks
+*.keystore
+*keystore*.txt
+# Local / generated
+local.properties
+.gradle/
+.kotlin/
+build/
+app/build/
+tests/node_modules/
+tests/shots/
+signed/
+*.iml
+.idea/

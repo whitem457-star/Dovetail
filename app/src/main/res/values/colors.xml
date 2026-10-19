@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Match the page background (the bg colour token in web/template.html) so the bars blend in. -->
+    <color name="page_bg">#F1F4F2</color>
+    <!-- Both sets, for when the app's own theme (Settings › Appearance) differs from the phone's. -->
+    <color name="brand">#0B6B4C</color>
+    <color name="page_bg_light">#F1F4F2</color>
+    <color name="page_ink_light">#13241C</color>
+    <color name="page_bg_dark">#0A110E</color>
+    <color name="page_ink_dark">#E8F0EB</color>
+</resources>

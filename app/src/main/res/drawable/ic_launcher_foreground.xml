@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Drawn inside the 66dp safe zone of the 108dp canvas. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="7"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M60.5,36.5C59,31 54.5,28 49.5,28C43.5,28 39.5,32.5 39.5,38.5L39.5,58C39.5,63 37.5,66.5 33.5,69L59,69M32,49.5L52.5,49.5" />
+    <path android:fillColor="#00000000" android:strokeColor="#FFA6E8CC" android:strokeWidth="7"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M59,69L78,69M71,62L78,69L71,76" />
+</vector>

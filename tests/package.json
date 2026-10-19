@@ -1,0 +1,15 @@
+{
+  "name": "payday-tests",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "axe-core": "4.10.2",
+    "playwright": "1.56.0"
+  },
+  "scripts": {
+    "build-page": "node build-page.mjs",
+    "test": "npm run unit && npm run page",
+    "unit": "node --test unit/*.test.mjs",
+    "page": "node qa_pay.mjs && node qa_household.mjs && node qa_oneoff.mjs && node qa_setup.mjs && node qa_rem.mjs && node qa_bridge.mjs && node qa_analysis.mjs && node qa_quality.mjs && node qa_ui.mjs && node qa_pay22.mjs && node qa_look.mjs && node qa_share.mjs && node qa_notify.mjs && node qa_twocopies.mjs && node qa_style.mjs && node qa_tour.mjs && node qa_v27.mjs && node qa_recovery.mjs"
+  }
+}

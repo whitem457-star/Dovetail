@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Dovetail</string>
+    <string name="lock_title">Dovetail is locked</string>
+    <string name="lock_button">Unlock</string>
+    <string name="lock_prompt_title">Unlock Dovetail</string>
+    <string name="lock_prompt_subtitle">Use your fingerprint, face or screen lock</string>
+    <string name="lock_unavailable">App lock is on, but this phone has no screen lock set up, so Dovetail opened without it.</string>
+    <string name="share_title">Save or send your Dovetail backup</string>
+    <string name="share_failed">Couldn\'t prepare the file to share.</string>
+    <string name="feedback_no_email">There\'s no email app on this phone. Write to %1$s.</string>
+    <string name="share_export_title">Share Dovetail export</string>
+    <string name="notify_channel">Reminders</string>
+    <string name="notify_channel_description">Payday tomorrow, bill renewals, your reminders and dated one-offs</string>
+    <string name="notify_public">You have a reminder</string>
+</resources>

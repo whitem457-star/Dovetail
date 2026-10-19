@@ -1,0 +1,217 @@
+/* Dovetail: the Analysis tab's computations. Pure functions only; also loaded by the unit tests.
+   Everything here is derived from what the app already holds (settings, saved months, ticks, renewals): nothing new
+   is ever asked for. c = settings, months = saved months, k = the budget month on screen, today = "YYYY-MM-DD". */
+
+/* Months the household actually used (typed pay or ticked a transfer), oldest first, up to and including k. */
+function usedMonths(months,upTo){return Object.keys(months).filter(function(x){var d=months[x];if(!d||typeof d!=="object"||!/^\d{4}-\d{2}$/.test(x)||x>upTo)return false;
+  var pay=d.pay&&Object.keys(d.pay).some(function(p){return payIsTyped(d,p)}),done=d.done&&Object.keys(d.done).some(function(s){return d.done[s]!=null&&d.done[s]!==false});
+  return pay||done}).sort()}
+function typedPayMonths(months,upTo){return Object.keys(months).filter(function(x){return /^\d{4}-\d{2}$/.test(x)&&x<=upTo&&hasTypedPay(months,x)}).sort()}
+function nextMonths(k,n){var out=[];for(var i=0;i<n;i++)out.push(shiftMonth(k,i));return out}
+function sum(list,f){return list.reduce(function(t,x){return t+(f?f(x):x)},0)}
+
+/* Typical monthly income: each person's average typed pay over their last 6 typed months up to k (or usual pay),
+   plus regular other income. One-offs are left out: they aren't typical, and nor is estimated pay (payIsTyped). */
+function avgIncome(c,months,k){
+  var people=c.people.map(function(p){var keys=Object.keys(months).filter(function(x){return x<=k&&payIsTyped(months[x],p.id)}).sort().slice(-6);
+    if(keys.length)return {id:p.id,name:p.name,avg:sum(keys,function(x){return num(months[x].pay[p.id])})/keys.length,months:keys.length};
+    return {id:p.id,name:p.name,avg:num(p.usualPay),months:0}});
+  var other=sum(c.income,function(i){return num(i.amount)});
+  return {people:people,other:other,total:sum(people,function(p){return p.avg})+other}}
+
+/* 1. The average month: income → bills → spending budgets → savings → float. Irregular bills are spread over the year. */
+function monthlyPicture(c,months,k){
+  var inc=avgIncome(c,months,k),bills=0,billSavings=0;
+  c.bills.forEach(function(b){if(b.savings)billSavings+=monthlyEquivalent(b);else bills+=monthlyEquivalent(b)});
+  var budgets=sum(c.budgets,function(b){return num(b.amount)}),transfers=sum(c.savings,function(s){return num(s.amount)}),saving=transfers+billSavings;
+  var flt=inc.total-bills-budgets-saving,I=inc.total;
+  return {income:I,incomeDetail:inc,bills:bills,budgets:budgets,saving:saving,savingTransfers:transfers,savingBills:billSavings,float:flt,
+    savingsRate:I>0?saving/I:null,committed:I>0?bills/I:null,discretionary:budgets+flt,discretionaryShare:I>0?(budgets+flt)/I:null}}
+
+/* 2. Where the money goes: bills by category, biggest first (bills with no category last). */
+function byCategory(c){
+  var groups={},total=sum(c.bills,annualCost);
+  c.bills.forEach(function(b){var key=b.category||"",g=groups[key]||(groups[key]={key:key,name:categoryName(key),annual:0,bills:[]});
+    g.annual+=annualCost(b);g.bills.push({id:b.id,name:b.name,annual:annualCost(b),monthly:monthlyEquivalent(b),perYear:perYear(b),amount:num(b.amount)})});
+  var list=Object.keys(groups).map(function(key){var g=groups[key];g.monthly=g.annual/12;g.share=total>0?g.annual/total:0;
+    g.bills.sort(function(a,b){return b.annual-a.annual||String(a.name).localeCompare(String(b.name))});return g});
+  list.sort(function(a,b){if(!a.key!==!b.key)return a.key?-1:1;return b.annual-a.annual||a.name.localeCompare(b.name)});
+  return {groups:list,annual:total,monthly:total/12,uncategorised:groups[""]?groups[""].bills.length:0,
+    unset:c.bills.filter(function(b){return b.category==null}).length}}
+
+/* 3. Subscriptions and memberships, biggest first. */
+function subscriptions(c){
+  var bills=c.bills.filter(function(b){return b.category==="subscriptions"||b.category==="memberships"}).map(function(b){return {id:b.id,name:b.name,category:b.category,annual:annualCost(b),monthly:monthlyEquivalent(b),perYear:perYear(b),amount:num(b.amount)}});
+  bills.sort(function(a,b){return b.annual-a.annual||String(a.name).localeCompare(String(b.name))});
+  var annual=sum(bills,function(b){return b.annual});return {bills:bills,annual:annual,monthly:annual/12}}
+
+/* What goes out in budget month k: bills due that month + spending budgets + savings transfers + one-off payments. */
+function monthOutgoings(c,months,k){var m=mNum(k),ones=monthOneOffs(months,k).filter(function(o){return o.kind!=="in"});
+  var bills=sum(c.bills.filter(function(b){return applies(b,m)}),function(b){return num(b.amount)}),budgets=sum(c.budgets,function(b){return num(b.amount)}),
+    savings=sum(c.savings,function(s){return num(s.amount)}),oneOffs=sum(ones,function(o){return num(o.amount)});
+  return {k:k,bills:bills,budgets:budgets,savings:savings,oneOffs:oneOffs,oneOffCount:ones.length,total:bills+budgets+savings+oneOffs}}
+
+/* The 12 budget months the heavy/light and projected float charts show: 3 before k, k itself, and 8 after. */
+function chartMonths(k){var out=[];for(var i=-3;i<=8;i++)out.push(shiftMonth(k,i));return out}
+/* A month with any typed pay is "actual"; every other month is projected (estimated pay). Pay filled in with the
+   estimate when a transfer was ticked (payEstimated) isn't typed. */
+function hasTypedPay(months,k){var d=months[k];return !!(d&&typeof d==="object"&&d.pay&&Object.keys(d.pay).some(function(p){return payIsTyped(d,p)}))}
+
+/* 4. Heavy and light months: outgoings for the given budget months (default: the 12 from k). */
+function heavyLight(c,months,k,keys){var list=(keys||nextMonths(k,12)).map(function(x){var o=monthOutgoings(c,months,x);o.actual=hasTypedPay(months,x);return o});
+  var avg=sum(list,function(x){return x.total})/list.length,hi=list[0],lo=list[0];
+  list.forEach(function(x){if(x.total>hi.total+0.004)hi=x;if(x.total<lo.total-0.004)lo=x});
+  return {months:list,average:avg,heaviest:hi,lightest:lo,flat:hi.total-lo.total<0.005}}
+
+/* 5. Projected float for the given budget months (default: the 12 from k), from current settings, typed or estimated
+   pay and known one-offs. A month with typed pay also has predicted: the float the app showed before pay was typed
+   (each person's estimate from earlier months, or usual pay), or null when there was nothing to predict from. */
+function projectedFloat(c,months,k,keys){return (keys||nextMonths(k,12)).map(function(x){var ones=monthOneOffs(months,x),r=calc(c,mNum(x),payFor(c,months,x),ones),actual=hasTypedPay(months,x);
+  return {k:x,float:r.flt,short:r2(r.flt)<0,oneOffs:ones.length,actual:actual,predicted:actual?predictedFloat(c,months,x):null}})}
+function predictedFloat(c,months,k){var pay={},known=true;
+  c.people.forEach(function(p){var e=payEstimate(c,months,p.id,k);pay[p.id]=e.v;if(e.from==null&&!(num(p.usualPay)>0))known=false});
+  return known&&c.people.length?calc(c,mNum(k),pay,monthOneOffs(months,k)).flt:null}
+
+/* What makes budget month k differ from a plain month: the bills that aren't paid every month that are due then
+   (biggest first) and its one-offs, payments out and money in. Spending budgets and savings transfers are the same
+   every month, so they never make a month differ. */
+function monthExtras(c,months,k){var m=mNum(k),ones=monthOneOffs(months,k);
+  function big(a,b){return b.amount-a.amount||String(a.name).localeCompare(String(b.name))}
+  var bills=c.bills.filter(function(b){return perYear(b)<12&&applies(b,m)}).map(function(b){return {name:b.name||"Bill",amount:num(b.amount)}}).sort(big);
+  var out=ones.filter(function(o){return o&&o.kind!=="in"}).map(function(o){return {name:o.name||"One-off",amount:num(o.amount)}});
+  var inn=ones.filter(function(o){return o&&o.kind==="in"}).map(function(o){return {name:o.name||"One-off",amount:num(o.amount)}});
+  return {k:k,bills:bills,oneOffsOut:out,oneOffsIn:inn,billsTotal:sum(bills,function(b){return b.amount}),outTotal:sum(out,function(o){return o.amount}),inTotal:sum(inn,function(o){return o.amount})}}
+/* "Car insurance £300.00, Boiler £900.00 (one-off)". withIn adds one-off money in ("Refund +£60.00 (one-off)").
+   f formats the amounts (default £; the exports use plain numbers). */
+function extrasText(e,withIn,f){f=f||fmt;var parts=e.bills.map(function(b){return b.name+" "+f(b.amount)}).concat(e.oneOffsOut.map(function(o){return o.name+" "+f(o.amount)+" (one-off)"}));
+  if(withIn)parts=parts.concat(e.oneOffsIn.map(function(o){return o.name+" +"+f(o.amount)+" (one-off)"}));return parts.join(", ")}
+/* The line under the charts: "One-offs: Feb 2027 Boiler £900.00; Mar 2027 Refund +£60.00". Empty if there are none. */
+function oneOffsLine(c,months,keys,withIn){var parts=[];keys.forEach(function(x){var e=monthExtras(c,months,x);
+  e.oneOffsOut.forEach(function(o){parts.push(mShort(x)+" "+o.name+" "+fmt(o.amount))});
+  if(withIn)e.oneOffsIn.forEach(function(o){parts.push(mShort(x)+" "+o.name+" +"+fmt(o.amount))})});
+  return parts.length?"One-offs: "+parts.join("; "):""}
+
+/* 6. Pay and float history: the last 24 months with typed pay, up to k, oldest first. */
+function payHistory(c,months,k){return typedPayMonths(months,k).slice(-24).map(function(x){var d=months[x],pay={};
+  c.people.forEach(function(p){pay[p.id]=payIsTyped(d,p.id)?num(d.pay[p.id]):null});
+  return {k:x,pay:pay,float:calc(c,mNum(x),payFor(c,months,x),monthOneOffs(months,x)).flt}})}
+
+/* 7. Saved so far: each savings transfer's ticked total (since the first saved month, and this tax year), and how
+   consistently it was made. Bills marked as savings are direct debits, counted in each saved month they're due. */
+function tickValue(v,fallback){return v==null||v===false?null:typeof v==="number"?v:fallback}
+/* Every tick counts towards the totals. "Ticked in X of Y months" counts from when a transfer started: the earlier of
+   its "since" month (set when it's added in 2.1 or later) and its first tick, otherwise the first month the app was
+   used. A bill marked as savings counts from when it was marked (savingsSince), if known. */
+function savedSoFar(c,months,k){
+  var used=usedMonths(months,k),ty=taxYear(c.payday,k),items=[];
+  function from(start){return used.filter(function(x){return !start||x>=start})}
+  c.savings.forEach(function(s){var total=0,tyTotal=0,ticked=0,first=null;
+    used.forEach(function(x){var v=tickValue(months[x].done&&months[x].done["s:"+s.id],num(s.amount));if(v==null)return;if(!first)first=x;total+=v;ticked++;if(inTaxYear(c.payday,x,ty))tyTotal+=v});
+    var start=s.since?(first&&first<s.since?first:s.since):null,mine=from(start);
+    items.push({id:s.id,name:s.name,kind:"transfer",total:total,taxYear:tyTotal,monthsDone:ticked,monthsSaved:mine.length,consistency:mine.length?ticked/mine.length:null,since:mine[0]||null})});
+  c.bills.filter(function(b){return b.savings}).forEach(function(b){var total=0,tyTotal=0,due=0,mine=from(b.savingsSince);
+    mine.forEach(function(x){if(!applies(b,mNum(x)))return;var v=num(b.amount);total+=v;due++;if(inTaxYear(c.payday,x,ty))tyTotal+=v});
+    items.push({id:b.id,name:b.name,kind:"bill",total:total,taxYear:tyTotal,monthsDone:due,monthsSaved:due,consistency:due?1:null,since:mine[0]||null})});
+  return {items:items,taxYear:ty,since:used[0]||null,monthsSaved:used.length,total:sum(items,function(i){return i.total}),taxYearTotal:sum(items,function(i){return i.taxYear})}}
+
+/* 8. Price changes at renewal in the 12 months to today, from each bill's renewal history. The household rate covers
+   every bill renewed in that time (unchanged ones count as 0%), comparing yearly cost before and after. */
+function priceChanges(c,today){var renewed=[],changes=[];
+  c.bills.forEach(function(b){var h=arr(b.history).filter(function(e){if(!e||!validDate(e.on))return false;var d=daysUntil(e.on,today);return d<=0&&d>=-365}).sort(function(x,y){return x.on<y.on?-1:x.on>y.on?1:0});
+    if(!h.length)return;var from=num(h[0].from),to=num(h[h.length-1].to),py=perYear(b),item={id:b.id,name:b.name,on:h[h.length-1].on,from:from,to:to,annualFrom:from*py,annualTo:to*py,pct:from>0?(to-from)/from:null};
+    renewed.push(item);if(Math.abs(to-from)>0.004)changes.push(item)});
+  changes.sort(function(a,b){return Math.abs(b.annualTo-b.annualFrom)-Math.abs(a.annualTo-a.annualFrom)});
+  var before=sum(renewed,function(i){return i.annualFrom}),after=sum(renewed,function(i){return i.annualTo});
+  return {changes:changes,renewed:renewed.length,rate:before>0?(after-before)/before:null,yearlyChange:after-before}}
+
+/* 9. Top-ups: accounts that needed topping up in the last 12 used months up to k. */
+function topUps(c,months,k){var used=usedMonths(months,k).slice(-12),acc={};
+  used.forEach(function(x){calc(c,mNum(x),payFor(c,months,x),monthOneOffs(months,x)).steps.forEach(function(s){if(s.kind!=="topup")return;
+    var a=acc[s.to]||(acc[s.to]={account:s.to,from:s.from,count:0,total:0,months:[]});a.count++;a.total+=s.amt;a.months.push(x);a.from=s.from})});
+  var list=Object.keys(acc).map(function(id){var a=acc[id];a.average=a.total/a.count;return a});
+  list.sort(function(a,b){return b.count-a.count||b.total-a.total});
+  return {accounts:list,monthsLooked:used.length}}
+
+/* ---------- reminders: shared by the Reminders tab and the notification schedule ----------
+   Bill renewals, your own reminders and dated one-offs, soonest first, with days to go and a status:
+   "over" (date passed), "soon" (within its "remind me" lead time) or "later". */
+function reminderList(c,months,today){return reminderItems_(c,months,today,false)}
+/* withPast: also dated one-offs whose date has gone (reminderList leaves them out; a month's list keeps them). */
+function reminderItems_(c,months,today,withPast){var out=[];
+  c.bills.forEach(function(b){if(validDate(b.renews))out.push({key:"b:"+b.id,kind:"bill",name:b.name,date:b.renews,lead:b.lead!=null?num(b.lead):30,amount:num(b.amount),note:b.note||"",ref:b})});
+  c.reminders.forEach(function(r){if(validDate(r.date))out.push({key:"r:"+r.id,kind:"rem",name:r.name,date:r.date,lead:r.lead!=null?num(r.lead):30,amount:null,note:r.note||"",yearly:!!r.yearly,ref:r})});
+  Object.keys(months).forEach(function(k){arr(months[k]&&months[k].oneOffs).forEach(function(o){if(o&&validDate(o.date)&&(withPast||daysUntil(o.date,today)>=0))out.push({key:"o:"+k+":"+o.id,kind:"oneoff",name:o.name||"One-off",date:o.date,lead:7,amount:num(o.amount),note:"",month:k,ref:o})})});
+  out.forEach(function(it){it.days=daysUntil(it.date,today);it.status=it.days<0?"over":it.days<=it.lead?"soon":"later"});
+  out.sort(function(x,y){return x.date<y.date?-1:x.date>y.date?1:0});return out}
+/* The dates a budget month's money has to cover: from the payday that funds month k (inclusive) to the day before the
+   payday that funds k+1. Without a payday set, the calendar month. Both ends "YYYY-MM-DD", inclusive. */
+function monthWindow(pc,k){var a=paydayFor(pc,k),b=a&&paydayFor(pc,shiftMonth(k,1));
+  if(!a||!b){var q=k.split("-").map(Number);return {from:k+"-01",to:ymd(q[0],q[1],dim(q[0],q[1]))}}
+  return {from:a,to:addDays(b,-1)}}
+/* Reminders whose date falls in budget month k's window: bill renewals, your own reminders and dated one-offs (from any
+   month's list, including ones whose date has passed, with status "past"), sorted by date. days and status still count
+   from today. */
+function remindersInMonth(c,months,k,today){var w=monthWindow(c.payday,k);
+  return reminderItems_(c,months,today,true).filter(function(it){return it.date>=w.from&&it.date<=w.to})
+    // A one-off whose date has gone has simply happened (it's in that month's transfers): "past", not overdue.
+    .map(function(it){if(it.kind==="oneoff"&&it.days<0)it.status="past";return it})}
+/* What to do about a reminder: the user's own note, otherwise a suggestion from its name. */
+function reminderAction(c,it){var n=(it.name||"").toLowerCase(),acc=function(id){var a=accById(c,id);return a?a.name||"Unnamed account":"Missing account"};
+  if(it.kind==="oneoff")return (it.ref.kind==="in"?"Money expected into "+acc(it.ref.account):"One-off payment from "+acc(it.ref.account))+". It's included in the "+mLabel(it.month)+" transfers.";
+  if(it.status==="over"&&it.kind==="bill")return "This date has passed. It has probably renewed, so check the new price and set the next renewal date.";
+  if(it.status==="over"&&/mot/.test(n))return "This date has passed. It's illegal to drive without a valid MOT, so book one now if it isn't done. If it is done, mark it as renewed.";
+  if(it.status==="over"&&it.kind==="rem")return "This date has passed. If it's done, "+(it.yearly?"mark it as renewed to move it on a year.":"tap Done to clear it.");
+  if(/mortgage|fixed rate|remortgage/.test(n))return "Your fixed deal ends. Compare deals and book a new rate. Lenders usually let you lock one in a few months ahead.";
+  if(/\bmot\b/.test(n))return "Book the MOT. You can have it done up to a month (minus a day) early and keep the same renewal date.";
+  if(/insur|\bins\b|life|cover|health|aviva|axa|admiral|direct line|esure|\blv\b/.test(n))return "Get quotes before it renews automatically. Renewal prices are often higher than new-customer prices.";
+  if(/energy|gas|electric|tariff|octopus|\bedf\b|e\.?on|\bovo\b/.test(n))return "Your fixed tariff ends. Compare tariffs and pick a new one before it moves to a variable rate.";
+  if(/broadband|internet|phone|mobile|\bsim\b|media|virgin|\bsky\b|\bbt\b|talktalk|vodafone|\bee\b|\bo2\b|giffgaff|smarty/.test(n))return "Your contract ends. Ask for a better deal or switch, because out-of-contract prices often jump.";
+  if(/gym|leisure|membership|netflix|disney|spotify|prime|subscription|streaming/.test(n))return "It renews soon. Check you still use it and what the new price will be.";
+  return "Check the price and decide whether to renew."}
+
+/* ---------- reminder notifications ----------
+   The page works out what to notify for the next `days` days (default 90) and hands the list to the Android app, which
+   posts each entry on its date. key is unique per item per day, so nothing is notified twice. Amounts are only included
+   when c.notify.amounts is on (notifications can show on the lock screen).
+   (a) "Payday tomorrow", the day before each payday, with the number of transfers for the month it pays for.
+   (b) Each bill renewal and reminder on the day it becomes "due soon" (its remind-me lead time) and on the day itself.
+   (c) Each dated one-off, the day before.
+   Each entry also carries late: {title, text}, worded for the following day, which the app uses if Android delays
+   its daily check past midnight (it can for apps that aren't opened often). */
+function notificationSchedule(c,months,today,days){days=days||90;var end=addDays(today,days-1),out=[],seen={},amounts=!!(c.notify&&c.notify.amounts);
+  function add(date,item,title,text,late){if(date<today||date>end)return;var key=item+"@"+date;if(seen[key])return;seen[key]=1;out.push({date:date,key:key,title:title,text:text,late:late})}
+  var pc=c.payday||{};
+  if(pc.day){var m0=today.slice(0,7);for(var i=0;i<=4;i++){var pk=shiftMonth(m0,i),q=pk.split("-").map(Number),pd=paydayIn(pc,q[0],q[1]);if(!pd)continue;
+    var bm=budgetMonthOfPay(pc,pk),r=calc(c,mNum(bm),payFor(c,months,bm),monthOneOffs(months,bm)),n=r.steps.length;
+    var body=" pays for "+mLabel(bm)+". "+(n?n+" transfer"+(n===1?"":"s")+" to make.":"No transfers needed.")+(amounts?" Expected left over "+fmt(r.flt)+".":"");
+    add(addDays(pd,-1),"pay:"+pd,"Payday tomorrow",DAYS[dow(pd)]+" "+fmtDate(pd)+body,{title:"Payday today",text:"Today, "+DAYS[dow(pd)]+" "+fmtDate(pd)+","+body})}}
+  reminderList(c,months,today).forEach(function(it){var title=(it.name||(it.kind==="oneoff"?"One-off":"Reminder"))+(amounts&&it.amount!=null&&it.kind!=="rem"?" "+(it.kind==="oneoff"&&it.ref.kind==="in"?"+":"")+fmt(it.amount):"");
+    var act=reminderAction(c,{kind:it.kind,name:it.name,status:"soon",yearly:it.yearly,ref:it.ref,month:it.month});
+    var when=DAYS[dow(it.date)]+" "+fmtDate(it.date);
+    if(it.kind==="oneoff"){add(addDays(it.date,-1),it.key,title,"Tomorrow, "+when+". "+act,{title:title,text:"Today, "+when+". "+act});return}
+    if(it.days<0)return;
+    if(it.lead>0)add(addDays(it.date,-it.lead),it.key,title,"Due soon: "+when+", "+relDays(it.lead)+". "+act,{title:title,text:"Due soon: "+when+", "+relDays(it.lead-1)+". "+act});
+    add(it.date,it.key,title,"Today, "+when+". "+act,{title:title,text:"Yesterday, "+when+". "+act})});
+  out.sort(function(a,b){return a.date<b.date?-1:a.date>b.date?1:a.key<b.key?-1:a.key>b.key?1:0});
+  return out.slice(0,300)}
+
+/* The Pay tab's "Not every month" card: bills that aren't paid every month that are due in budget month k, and those
+   due in each of the next n months. Each bill is listed once: at k if it's due then, otherwise at its first month in
+   the window. repeats: whether any bill was left out of a later month because it was already listed. */
+function notEveryMonth(c,k,n){n=n==null?3:n;var irr=c.bills.filter(function(b){return perYear(b)<12}),seen={},repeats=false;
+  function line(b){return {id:b.id,name:b.name,amount:num(b.amount),account:b.account}}
+  function dueIn(x){return irr.filter(function(b){return applies(b,mNum(x))}).map(line).sort(function(a,b){return b.amount-a.amount||String(a.name).localeCompare(String(b.name))})}
+  var due=dueIn(k);due.forEach(function(b){seen[b.id]=1});
+  var coming=[];for(var i=1;i<=n;i++){var x=shiftMonth(k,i),all=dueIn(x),list=all.filter(function(b){return !seen[b.id]});
+    if(list.length<all.length)repeats=true;list.forEach(function(b){seen[b.id]=1});
+    if(list.length)coming.push({k:x,bills:list,total:sum(list,function(b){return b.amount})})}
+  return {any:irr.length>0,due:due,dueTotal:sum(due,function(b){return b.amount}),coming:coming,repeats:repeats}}
+
+/* Clean axis ticks (about n of them) covering lo..hi. Tiny or zero ranges are widened first, and the number of
+   ticks is capped, so odd values can never stall the page. */
+function niceTicks(lo,hi,n){lo=r2(lo);hi=r2(hi);if(!isFinite(lo)||!isFinite(hi)){lo=0;hi=1}
+  if(hi-lo<0.01){var pd=Math.max(1,Math.abs(lo)*0.1);lo-=pd;hi+=pd}
+  var span=hi-lo,step=Math.pow(10,Math.floor(Math.log10(span/n))),err=span/n/step;
+  if(err>=7.5)step*=10;else if(err>=3.5)step*=5;else if(err>=1.5)step*=2;
+  var a=Math.floor(lo/step)*step,count=Math.min(20,Math.round((Math.ceil(hi/step)*step-a)/step)),t=[];
+  for(var i=0;i<=count;i++)t.push(Math.round((a+i*step)*100)/100);return t}
