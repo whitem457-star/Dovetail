@@ -84,9 +84,11 @@ const slidR = await p.$eval('#tab-pay', e => e.classList.contains('slide-r')); a
 check('Swipe right: back to the month before, sliding in from the left', (await label()) === L0 && (await payState()) === S0 && slidR, (await payState()) + ' vs ' + S0);
 await p.click('#t-analysis'); await p.waitForTimeout(400);
 const an0 = await T(p, '#analysis');
-await swipe(p, 300, 200, 150, 200); await p.waitForTimeout(400);
+// Swipe across the Month by month heading: a swipe that starts on a chart is left to the chart.
+const anY = Math.round(await p.$eval('#anMonthsH', e => { const r = e.getBoundingClientRect(); return r.top + r.height / 2; }));
+await swipe(p, 300, anY, 150, anY); await p.waitForTimeout(400);
 check('On Analysis a swipe moves the Analysis month', (await where()) === 'analysis' && (await label()) === shiftL(L0, 1) && (await T(p, '#analysis')) !== an0);
-await swipe(p, 100, 200, 260, 200); await p.waitForTimeout(400);
+await swipe(p, 100, anY, 260, anY); await p.waitForTimeout(400);
 check('…and back', (await label()) === L0);
 await p.click('#t-due'); await p.waitForTimeout(400);
 await swipe(p, 300, 300, 150, 300); await p.waitForTimeout(400);

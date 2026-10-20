@@ -134,7 +134,7 @@ check('…and Undo still works', (await bills(p)).some(b => b.name === 'Water'))
 // ---------- app details for testers ----------
 await p.click('#t-settings'); await p.click('#copyDetails'); await p.waitForTimeout(150);
 const det = await p.evaluate(() => window.__copied || '');
-check('"Copy app details" copies version and device facts', /^Dovetail \d+\.\d+ \(data version 5\)/.test(det) && det.includes('Household: 2 people, 4 accounts, 32 bills, 1 saved month') && (await T(p, '#toast')) === 'App details copied', det);
+check('"Copy app details" copies version and device facts', /^Dovetail \d+(\.\d+)+ \(data version 5\)/.test(det) && det.includes('Household: 2 people, 4 accounts, 32 bills, 1 saved month') && (await T(p, '#toast')) === 'App details copied', det);
 check('…with no names or amounts', !/Alex|Sam|Mortgage|Kestrel|Joint|Current account|Spotify|£/.test(det), det);
 // Send feedback (2.9): in a browser, a mailto link to the support address with the app details.
 const fbHref = await p.getAttribute('#sendFeedback', 'href');
@@ -152,7 +152,7 @@ await p.click('#t-settings'); await p.waitForTimeout(100);
 check('In the app, Send feedback is a button', (await p.$eval('#sendFeedback', e => e.tagName)) === 'BUTTON');
 await p.click('#sendFeedback'); await p.waitForTimeout(150);
 const fb = await p.evaluate(() => window.__qaNative.lastFeedback || {});
-check('…that asks the app to open the email app, with the subject and the app details', /^Dovetail \d+\.\d+ feedback$/.test(fb.subject || '') && (fb.body || '').startsWith('What happened, or your idea:\n') && fb.body.includes('App details (no names or amounts):\nDovetail ') && fb.body.includes('Household: 2 people, 4 accounts'), JSON.stringify(fb));
+check('…that asks the app to open the email app, with the subject and the app details', /^Dovetail \d+(\.\d+)+ feedback$/.test(fb.subject || '') && (fb.body || '').startsWith('What happened, or your idea:\n') && fb.body.includes('App details (no names or amounts):\nDovetail ') && fb.body.includes('Household: 2 people, 4 accounts'), JSON.stringify(fb));
 check('…never names or amounts', !/Alex|Sam|Mortgage|Kestrel|Joint|Current account|Spotify|£/.test(fb.body || ''), fb.body);
 // If the bridge refuses the request (it shouldn't: a missing email app is Android's message), the address is copied.
 await p.evaluate(() => { window.__copied = null; Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: t => { window.__copied = t; return Promise.resolve(); } } }); delete window.PaydayNative.sendFeedback; });

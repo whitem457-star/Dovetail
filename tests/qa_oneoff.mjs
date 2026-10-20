@@ -55,8 +55,7 @@ await p.click('#addOneOff'); await p.fill('#oo_name_new', 'School trip'); await 
 await p.click('#addOneOff'); await p.fill('#oo_name_new', 'Already paid'); await p.fill('#oo_amt_new', '5'); await p.fill('#oo_date_new', '2026-10-01'); await p.click('#oo_add'); await p.waitForTimeout(150);
 check('A one-off due within a week counts on the Reminders badge (Leisure Centre + School trip = 2)', (await T(p, '#dueBadge')) === '2');
 if (await p.isVisible('#undoBar')) await p.click('#undoX'); // the delete's undo bar sits over the bottom of the page
-await p.click('#histBox summary');
-check('History lists a month that only has one-offs (January 2027)', (await T(p, '#hist')).includes('January 2027'));
+check('A month that only has one-offs is saved (January 2027)', ((await LS(p, K.mon))['2027-01'] || {}).oneOffs?.some(o => o.name === 'Birthday'));
 await p.click('#t-due'); await p.waitForTimeout(100); await p.click('#dueAll summary'); await p.waitForTimeout(80);
 const due = await T(p, '#dueList');
 check('Reminders: School trip needs attention, due soon', /Needs attention[\s\S]*School trip[\s\S]*20 Oct 2026 · in 5 days[\s\S]*Due soon/i.test(due), due.slice(0, 500));

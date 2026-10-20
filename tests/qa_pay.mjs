@@ -46,8 +46,7 @@ await p.click('#next'); await p.click('#next');
 check('February: TV Licence due, no Council Tax', await p.evaluate(() => { const t = document.getElementById('due').textContent, due = t.split('Coming up')[0]; return due.includes('TV Licence') && !due.includes('Council Tax'); }));
 await goMonth(p, 'November 2026');
 check('Back to November keeps the saved pay', (await p.inputValue('#pay_alex')) === '2401.25' && (await p.inputValue('#pay_sam')) === '2320.00');
-await p.click('#histBox summary');
-check('History lists November with both people\'s pay', (await T(p, '#hist')).includes('November 2026') && (await T(p, '#hist')).includes('Alex £2,401.25'));
+check('November is saved with both people\'s pay, and there\'s no Saved months list (2.9.1)', (await LS(p, K.mon))['2026-11'].pay.alex === 2401.25 && (await LS(p, K.mon))['2026-11'].pay.sam === 2320 && (await p.$('#histBox')) === null, JSON.stringify((await LS(p, K.mon))['2026-11']));
 await p.click('#accounts summary');
 check('Bills by account lists each account', (await T(p, '#acctList')).includes('Joint bills account') && (await T(p, '#acctList')).includes('Council Tax'));
 
@@ -87,8 +86,6 @@ let mo = (await LS(p, K.mon))['2026-11'];
 check('Clearing a pay box saves it as not entered (null)', mo.pay.alex === null && mo.pay.sam === 2300, JSON.stringify(mo));
 await p.click('#next'); await p.click('#prev');
 check('Revisiting keeps the box empty with the estimate hint', (await p.inputValue('#pay_alex')) === '' && (await T(p, '#payHint_alex')).startsWith('Using'));
-await p.click('#histBox summary');
-check('History shows "not typed in" for the cleared pay', (await T(p, '#hist')).includes('not typed in'));
 await p.fill('#pay_alex', '2400'); await p.waitForTimeout(900);
 await p.click('#steps li:nth-child(5) .tick'); await p.waitForTimeout(150);
 await p.click('#t-settings'); await p.click('#sSavings summary');
@@ -98,7 +95,6 @@ await p.click('#t-pay'); await p.waitForTimeout(100);
 const doneRoutes = await p.$$eval('#steps li.done .route', els => els.map(e => e.textContent));
 check('Holiday transfer still ticked after deleting the one above it', doneRoutes.length === 1 && doneRoutes[0].includes('Holiday'), JSON.stringify(doneRoutes));
 check('Progress shows 1 of 4', (await T(p, '#progressText')) === '1 of 4 done');
-check('History count uses the current transfers', (await T(p, '#hist')).includes('1 of 4 done'));
 const L0 = await p.evaluate(() => history.length);
 for (const t of ['due', 'settings', 'due', 'settings']) { await p.click('#t-' + t); await p.waitForTimeout(40); }
 const L1 = await p.evaluate(() => history.length);

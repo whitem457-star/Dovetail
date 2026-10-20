@@ -85,11 +85,6 @@ function monthExtras(c,months,k){var m=mNum(k),ones=monthOneOffs(months,k);
    f formats the amounts (default £; the exports use plain numbers). */
 function extrasText(e,withIn,f){f=f||fmt;var parts=e.bills.map(function(b){return b.name+" "+f(b.amount)}).concat(e.oneOffsOut.map(function(o){return o.name+" "+f(o.amount)+" (one-off)"}));
   if(withIn)parts=parts.concat(e.oneOffsIn.map(function(o){return o.name+" +"+f(o.amount)+" (one-off)"}));return parts.join(", ")}
-/* The line under the charts: "One-offs: Feb 2027 Boiler £900.00; Mar 2027 Refund +£60.00". Empty if there are none. */
-function oneOffsLine(c,months,keys,withIn){var parts=[];keys.forEach(function(x){var e=monthExtras(c,months,x);
-  e.oneOffsOut.forEach(function(o){parts.push(mShort(x)+" "+o.name+" "+fmt(o.amount))});
-  if(withIn)e.oneOffsIn.forEach(function(o){parts.push(mShort(x)+" "+o.name+" +"+fmt(o.amount))})});
-  return parts.length?"One-offs: "+parts.join("; "):""}
 
 /* 6. Pay and float history: the last 24 months with typed pay, up to k, oldest first. */
 function payHistory(c,months,k){return typedPayMonths(months,k).slice(-24).map(function(x){var d=months[x],pay={};

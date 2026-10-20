@@ -64,6 +64,21 @@ button:focus-visible,a.btn:focus-visible,input:focus-visible,select:focus-visibl
 .bar{position:sticky;top:0;z-index:5;background:var(--bg);padding-block:14px 10px;display:flex;align-items:center;gap:10px}
 .bar h1{font-size:1.25rem;font-weight:700;flex:1;min-width:0;text-align:center}
 .bar h1 small{display:block;font-family:var(--f-body);font-size:.78rem;font-weight:500;color:var(--muted)}
+/* The month name opens the month picker (2.10): two wheels that snap to the option in the middle band. */
+.mpick{font:inherit;color:inherit;background:none;border:0;padding:0 10px;min-height:44px;border-radius:14px;display:inline-flex;align-items:center;gap:8px;cursor:pointer;max-width:100%}
+.mpick::after{content:"";flex:none;width:.4em;height:.4em;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:translateY(-.15em) rotate(45deg);opacity:.6}
+.wheels{--wo:max(44px,2.75rem);position:relative;display:flex;gap:12px}
+.wheel-col{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;border-radius:var(--r-in);text-align:center}
+.wheel-col:has(.wheel:focus-visible){outline:2px solid var(--accent);outline-offset:2px}
+@supports not selector(:has(*)){.wheel:focus-visible{outline:2px solid var(--accent)}}
+.wheel{position:relative;height:calc(5 * var(--wo));overflow-y:auto;scroll-snap-type:y mandatory;padding-block:calc(2 * var(--wo));overscroll-behavior:contain;scrollbar-width:none;outline:none;
+  -webkit-mask-image:linear-gradient(transparent,#000 32%,#000 68%,transparent);mask-image:linear-gradient(transparent,#000 32%,#000 68%,transparent)}
+.wheel::-webkit-scrollbar{display:none}
+.wheel-o{height:var(--wo);display:flex;align-items:center;justify-content:center;scroll-snap-align:center;font-size:1.0625rem;color:var(--muted);cursor:pointer;white-space:nowrap}
+.wheel-o[aria-selected="true"]{color:var(--ink);font-weight:700}
+.sharechoice{display:flex;flex-direction:column;gap:10px}
+.sharechoice .btn{min-height:48px;width:100%}
+.wheel-band{position:absolute;left:0;right:0;bottom:calc(2 * var(--wo));height:var(--wo);background:var(--sunk);border-radius:var(--r-in);pointer-events:none}
 .iconbtn{width:44px;height:44px;border-radius:50%;border:0;background:var(--surface);box-shadow:var(--shadow);color:var(--ink);display:grid;place-items:center;font-size:1.25rem;flex:none}
 .pagehead{padding-block:18px 4px}
 .pagehead h1,.pagehead h2{font-size:1.5rem}
@@ -167,9 +182,6 @@ details.card[open]>summary::after{transform:rotate(-135deg) translate(-2px,-2px)
 details.card>.inner{padding:0 16px 16px;display:flex;flex-direction:column;gap:14px}
 details.card>summary .sumv{margin-left:auto;font-weight:600;color:var(--muted);font-size:.8125rem}
 .accthead{display:flex;justify-content:space-between;gap:10px;font-weight:700;padding-top:4px}
-.hist{display:flex;flex-direction:column;gap:8px}
-.hrow{display:grid;grid-template-columns:1fr auto;gap:2px 12px;padding:10px 12px;border-radius:12px;background:var(--sunk);border:0;text-align:left;width:100%}
-.hrow .r{text-align:right;font-variant-numeric:tabular-nums}
 
 /* settings and lists */
 .bill{border:1px solid var(--hair);border-radius:var(--r-in);overflow:hidden}
@@ -303,8 +315,8 @@ fieldset.seg{border:0;margin:0;padding:0;min-width:0}
   details.card[open]>.inner,.bill .ed,.rem .ed,.catbills:not([hidden]),.tablewrap:not([hidden]){animation:openin .18s ease-out}
   .tick{transition:background .2s,border-color .2s,transform .12s}.tick svg{transition:stroke-dashoffset .28s .06s ease-out}
   .amt{transition:opacity .2s}.hero .ring .rf{transition:stroke-dashoffset .5s cubic-bezier(.2,.8,.2,1)}
-  .btn,.copy,.iconbtn,.tick,.fchip,.catrow,.hrow,.extras button{transition:transform .1s ease-out}
-  .btn:active,.copy:active,.iconbtn:active,.tick:active,.fchip:active,.hrow:active{transform:scale(.96)}
+  .btn,.copy,.iconbtn,.tick,.fchip,.catrow,.extras button{transition:transform .1s ease-out}
+  .btn:active,.copy:active,.iconbtn:active,.tick:active,.fchip:active{transform:scale(.96)}
   .banner.alldone{animation:pop .35s ease-out}
 }
 /* ---------- 2.6: first-run setup ---------- */
@@ -439,8 +451,7 @@ fieldset.su-q legend{font-size:.875rem;color:var(--ink);margin-bottom:8px}
 .nudge .go{flex:none;white-space:nowrap}
 .trtools{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:6px 10px;margin-left:auto}
 .trtools .copy{min-height:40px}
-.nmnote{color:var(--muted);font-weight:500;font-size:.8125rem;padding:10px 4px;min-height:44px}
-.nmnote .go{color:var(--accent);font-weight:700}
+.nmnote{color:var(--muted);font-weight:500;font-size:.8125rem;margin:0;padding:10px 4px}
 /* Cards inside "This month in detail" sit flat on the sunk tone, so they don't look like cards stacked on a card. */
 #payDetails>summary{position:relative} /* holds its screen-reader-only ", " so it can't make the page scroll */
 #payDetails>.inner{gap:12px}
@@ -448,7 +459,6 @@ fieldset.su-q legend{font-size:.875rem;color:var(--ink);margin-bottom:8px}
 #payDetails #floatCards{gap:12px}
 .remmh{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px}
 .remnote{padding:8px 14px;border-left:4px solid var(--hair);border-radius:12px;background:var(--sunk);overflow-wrap:anywhere}
-.hist .mhead:first-child{padding-top:0}
 .su-bline{display:flex;flex-wrap:wrap;align-items:center;gap:0 6px;border-left:5px solid var(--c);background:var(--surface);border-radius:var(--r-in);box-shadow:var(--shadow);padding:2px 12px;min-width:0}
 .su-bline b{font-weight:600;overflow-wrap:anywhere;min-width:0}
 .su-bline .linkbtn{min-height:44px}
@@ -462,7 +472,7 @@ fieldset.su-q legend{font-size:.875rem;color:var(--ink);margin-bottom:8px}
 <main class="main" id="main"><div class="wrap">
   <div class="bar" id="monthBar">
     <button class="iconbtn" id="prev" aria-label="Previous month">‹</button>
-    <h1><span id="monthLabel">—</span><small id="barSub">Pay month</small></h1>
+    <h1><button type="button" class="mpick" id="monthPick" aria-haspopup="dialog" aria-describedby="monthPickHint"><span id="monthLabel">—</span></button><small id="barSub">Pay month</small></h1><span id="monthPickHint" hidden>Choose a month</span>
     <button class="iconbtn" id="next" aria-label="Next month">›</button>
   </div>
 
@@ -471,13 +481,13 @@ fieldset.su-q legend{font-size:.875rem;color:var(--ink);margin-bottom:8px}
 
   <!-- ================= PAY ================= -->
   <section class="tab" id="tab-pay" role="tabpanel" aria-label="Pay">
-    <!-- One notice at most above the hero (renderNotice): a restore offer, What's new, or the example banner / setup tips. -->
-    <div id="notice" hidden><div id="restoreOffer"></div><div id="whatsNew"></div><div id="exampleBanner"></div></div>
+    <!-- One notice at most above the hero (renderNotice): an update file to open (2.10), a restore offer, What's new, or the example banner / setup tips. -->
+    <div id="notice" hidden><div id="updateOffer"></div><div id="restoreOffer"></div><div id="whatsNew"></div><div id="exampleBanner"></div></div>
     <section class="hero" id="hero" aria-labelledby="heroH"></section>
     <div id="actionBanner"></div>
 
     <section class="card" aria-labelledby="payH" id="payCard">
-      <div class="spread"><h2 id="payH">Take-home pay</h2><span class="small muted">what reached your bank</span></div>
+      <h2 id="payH">Take-home pay</h2>
       <div class="small muted" id="payLine"></div>
       <div class="pay" id="payGrid"></div>
       <div id="payExtra"></div>
@@ -490,7 +500,7 @@ fieldset.su-q legend{font-size:.875rem;color:var(--ink);margin-bottom:8px}
       <div class="progress" aria-hidden="true"><i id="progressBar"></i></div>
       <div id="warnings" style="display:flex;flex-direction:column;gap:8px"></div>
       <ol class="steps" id="steps"></ol>
-      <button type="button" class="linkbtn nmnote" id="nmNote" aria-controls="payDetails" hidden></button>
+      <p class="nmnote" id="nmNote" hidden></p>
     </section>
 
     <!-- The rest of the month, closed until opened (for this session only). -->
@@ -511,7 +521,6 @@ fieldset.su-q legend{font-size:.875rem;color:var(--ink);margin-bottom:8px}
     </div></details>
 
     <details class="card" id="accounts"><summary>Bills by account</summary><div class="inner" id="acctList"></div></details>
-    <details class="card" id="histBox"><summary>Saved months</summary><div class="inner"><div class="hist" id="hist"></div></div></details>
   </section>
 
   <!-- ================= ANALYSIS ================= -->

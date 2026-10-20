@@ -249,6 +249,12 @@ class MainActivity : FragmentActivity(), NativeBridge.Host {
         }
     }
 
+    /** "Send an update for the other phone" (2.10; a choice of its own since 2.10.1): the update file, with the transfers as its message for email. */
+    override fun shareUpdate(json: String, fileName: String, text: String, title: String) {
+        val safe = safeFileName(fileName, ".json")
+        shareFiles(listOf(NativeBridge.ShareFile(safe, "application/json", json)), title, text)
+    }
+
     /** The email app, with a message to the support address. Without one, a message gives the address instead. */
     override fun sendFeedback(subject: String, body: String) {
         val mail = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:$FEEDBACK_EMAIL")).apply {
@@ -263,8 +269,11 @@ class MainActivity : FragmentActivity(), NativeBridge.Host {
         }
     }
 
-    /** Writes the files to the private share folder and opens the share sheet with read-only links to them. */
-    private fun shareFiles(files: List<NativeBridge.ShareFile>, title: String) {
+    /**
+     * Writes the files to the private share folder and opens the share sheet with read-only links to them. With [text],
+     * that's the message too (an email keeps it; WhatsApp drops it when a file goes with it) and [title] is its subject.
+     */
+    private fun shareFiles(files: List<NativeBridge.ShareFile>, title: String, text: String? = null) {
         try {
             val dir = File(cacheDir, SHARE_DIR)
             dir.deleteRecursively()
@@ -280,7 +289,8 @@ class MainActivity : FragmentActivity(), NativeBridge.Host {
             val send = Intent(if (uris.size == 1) Intent.ACTION_SEND else Intent.ACTION_SEND_MULTIPLE).apply {
                 type = if (types.size == 1) types[0] else "text/*"
                 if (uris.size == 1) putExtra(Intent.EXTRA_STREAM, uris[0]) else putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
-                putExtra(Intent.EXTRA_SUBJECT, safeFileName(files[0].name, extensionFor(files[0].mime)))
+                putExtra(Intent.EXTRA_SUBJECT, if (text != null) title else safeFileName(files[0].name, extensionFor(files[0].mime)))
+                if (text != null) putExtra(Intent.EXTRA_TEXT, text)
                 clipData = ClipData.newRawUri(null, uris[0]).also { c -> uris.drop(1).forEach { c.addItem(ClipData.Item(it)) } }
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
@@ -290,7 +300,8 @@ class MainActivity : FragmentActivity(), NativeBridge.Host {
             startActivity(chooser)
         } catch (e: Exception) {
             android.util.Log.w("Dovetail", "Couldn't share", e)
-            Toast.makeText(this, R.string.share_failed, Toast.LENGTH_LONG).show()
+            // The update file (text != null) says so in the page's own words; it never falls back to sending the text.
+            Toast.makeText(this, if (text != null) R.string.share_update_failed else R.string.share_failed, Toast.LENGTH_LONG).show()
         }
     }
 

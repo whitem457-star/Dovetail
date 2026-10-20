@@ -1,6 +1,7 @@
 package uk.whiteboard.payday
 
 import android.Manifest
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -169,6 +170,48 @@ class MainActivityTest {
         assertFalse(bridge.shareText("x".repeat(NativeBridge.MAX_TEXT_CHARS + 1), "x"))
         shadowOf(Looper.getMainLooper()).idle()
         assertNull(shadowOf(a).nextStartedActivity)
+    }
+
+    @Test fun shareUpdateSendsTheTransfersWithTheUpdateFile() {
+        val a = launch()
+        val bridge = shadowOf(a.web).getJavascriptInterface("PaydayNative") as NativeBridge
+        val text = "Dovetail transfers for November 2026\n1. ☐ Alex's account → Joint bills  £2,132.00\n\nTap the file to update Dovetail on your phone."
+        assertTrue(bridge.shareUpdate(json, "Dovetail-update-20-Oct-2026.json", text, "Dovetail transfers for November 2026"))
+        shadowOf(Looper.getMainLooper()).idle()
+        val chooser = shadowOf(a).nextStartedActivity
+        assertEquals(Intent.ACTION_CHOOSER, chooser.action)
+        @Suppress("DEPRECATION") val send = chooser.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)!!
+        assertEquals(Intent.ACTION_SEND, send.action)
+        assertEquals("application/json", send.type)
+        assertEquals(text, send.getStringExtra(Intent.EXTRA_TEXT))
+        assertEquals("Dovetail transfers for November 2026", send.getStringExtra(Intent.EXTRA_SUBJECT))
+        @Suppress("DEPRECATION") val uri = send.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)!!
+        assertEquals("content://uk.whiteboard.payday.fileprovider/share/Dovetail-update-20-Oct-2026.json", uri.toString())
+        assertTrue(send.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
+        assertEquals(json, File(a.cacheDir, "share/Dovetail-update-20-Oct-2026.json").readText())
+        @Suppress("DEPRECATION") val excluded = chooser.getParcelableArrayExtra(Intent.EXTRA_EXCLUDE_COMPONENTS)!!.toList()
+        assertTrue(excluded.contains(ComponentName(a, MainActivity::class.java)))
+    }
+
+    @Test fun shareUpdateRefusesNonBackupsAndOddText() {
+        val a = launch()
+        val bridge = shadowOf(a.web).getJavascriptInterface("PaydayNative") as NativeBridge
+        assertFalse(bridge.shareUpdate("{\"hello\":1}", "x.json", "text", "x"))
+        assertFalse(bridge.shareUpdate(json, "x.json", " ", "x"))
+        assertFalse(bridge.shareUpdate(json, "x.json", "x".repeat(NativeBridge.MAX_TEXT_CHARS + 1), "x"))
+        // Bigger than the other phone will open: refused, so the page sends the text on its own.
+        val big = "{\"app\":\"payday-transfers\",\"config\":{\"bills\":[]},\"x\":\"" + "a".repeat(MainActivity.MAX_IMPORT_BYTES) + "\"}"
+        assertFalse(bridge.shareUpdate(big, "x.json", "text", "x"))
+        val wide = "{\"app\":\"payday-transfers\",\"config\":{\"bills\":[]},\"x\":\"" + "\u00e9".repeat(MainActivity.MAX_IMPORT_BYTES / 2 + 10) + "\"}"
+        assertFalse(bridge.shareUpdate(wide, "x.json", "text", "x"))
+        shadowOf(Looper.getMainLooper()).idle()
+        assertNull(shadowOf(a).nextStartedActivity)
+        // The plain backup share keeps the file name as its subject and has no message.
+        assertTrue(bridge.share(json, "dovetail-backup-2026-10-16.json"))
+        shadowOf(Looper.getMainLooper()).idle()
+        @Suppress("DEPRECATION") val send = shadowOf(a).nextStartedActivity.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)!!
+        assertEquals("dovetail-backup-2026-10-16.json", send.getStringExtra(Intent.EXTRA_SUBJECT))
+        assertNull(send.getStringExtra(Intent.EXTRA_TEXT))
     }
 
     @Test fun sendFeedbackOpensTheEmailAppAddressedToSupport() {

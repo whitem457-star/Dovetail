@@ -45,9 +45,11 @@ await p.click('#t-analysis'); await p.waitForTimeout(30);
 check('Changing tab fades the page in', await p.$eval('#tab-analysis', e => e.classList.contains('fadein') && getComputedStyle(e).animationName === 'fadein'));
 await p.waitForTimeout(400);
 check('…briefly', !(await p.$eval('#tab-analysis', e => e.classList.contains('fadein'))));
-await swipe(p, 300, 200, 150, 200); await p.waitForTimeout(10);
+// Across the Month by month heading: a swipe that starts on a chart is left to the chart.
+const anY = Math.round(await p.$eval('#anMonthsH', e => { const r = e.getBoundingClientRect(); return r.top + r.height / 2; }));
+await swipe(p, 300, anY, 150, anY); await p.waitForTimeout(10);
 check('A swipe slides the next month in from the side', await p.$eval('#tab-analysis', e => e.classList.contains('slide-l')));
-await p.waitForTimeout(400); await swipe(p, 100, 200, 250, 200); await p.waitForTimeout(10);
+await p.waitForTimeout(400); await swipe(p, 100, anY, 250, anY); await p.waitForTimeout(10);
 check('…and swiping back slides it in from the other side', await p.$eval('#tab-analysis', e => e.classList.contains('slide-r')));
 await p.click('#t-pay'); await p.waitForTimeout(400);
 check('Going to a tab fades it in (no slide)', await p.$eval('#tab-pay', e => !e.classList.contains('slide-l') && !e.classList.contains('slide-r')));
