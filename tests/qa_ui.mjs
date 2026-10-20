@@ -80,7 +80,7 @@ const screens = [
   ['Pay with the "Finish setting up" card', null, async p => { await walkSetup(p, 4, true); await p.click('#su_later'); await skipTour(p); }],
   ['Settings, Start again waiting for the second tap', sampleStorage(false), async p => { await p.click('#t-settings'); await p.click('#sBackup summary'); await p.click('#startAgain'); }, { native: true }],
   ['setup after Start again, offering the backup', sampleStorage(false), async p => { await p.click('#t-settings'); await p.click('#sBackup summary'); await p.click('#startAgain'); await p.click('[data-confirm=startAgain]'); }, { native: true }],
-  ['Pay', sampleStorage(true), async p => { await p.click('#prev'); await p.click('#histBox summary'); await p.click('#accounts summary'); }],
+  ['Pay', sampleStorage(true), async p => { await p.click('#prev'); await p.click('#accounts summary'); }],
   ['Pay with one-off editor', sampleStorage(true), async p => { await p.click('#prev'); await p.click('#oneOffs .bill > button'); await p.click('#addOneOff'); }],
   ['Reminders with editor', sampleStorage(false), async p => { await p.click('#t-due'); await p.click('#dueList .rem .btn.ghost'); }],
   ['Settings, all open', sampleStorage(false), async p => { await p.click('#t-settings'); await p.evaluate(() => document.querySelectorAll('#tab-settings details').forEach(d => { d.open = true; }));
@@ -91,7 +91,7 @@ const screens = [
   ['Analysis, empty household', { 'payday.config.v1': { schema: 5, setupDone: true, people: [{ id: 'p', name: 'Pat', payAccount: 'a' }], accounts: [{ id: 'a', name: 'Main' }], bills: [], income: [], budgets: [], savings: [], reminders: [], doneLog: [], payday: {} } }, async p => { await p.click('#t-analysis'); }],
   ['tour stop (the transfers)', null, async p => { await walkSetup(p, 7); await p.click('#su_finish'); await p.waitForTimeout(200); for (let i = 0; i < 3; i++) await p.click('#tourNext'); }],
   ['tour stop (Reminders tab)', null, async p => { await p.click('#su_example'); await p.click('#exTour'); for (let i = 0; i < 7; i++) await p.click('#tourNext'); }],
-  ['help sheet open (left over)', sampleStorage(true), async p => { await p.click('#hero .helpq'); }],
+  ['help sheet open (Saved so far)', sampleStorage(true), async p => { await p.click('#t-analysis'); await p.click('#analysis .helpq[data-help=saved]'); }],
   ['Settings › Help', sampleStorage(false), async p => { await p.click('#t-settings'); await p.click('#sHelp summary'); }],
   ['How Dovetail works', sampleStorage(false), async p => { await p.click('#t-settings'); await p.click('#sHelp summary'); await p.click('#helpHow'); }],
   ['Pay with the first-month hint', null, async p => { await walkSetup(p, 7); await p.click('#su_finish'); await p.waitForTimeout(200); await skipTour(p); }],

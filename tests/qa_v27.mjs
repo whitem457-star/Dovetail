@@ -14,8 +14,8 @@ await stubCopy(p);
 
 // ---------- A. One notice above the hero; the rest of the month under "This month in detail" ----------
 check('The example opens on November 2026', (await T(p, '#monthLabel')) === 'November 2026');
-check('Pay tab order: one notice, the hero, the reminders line, pay, transfers, This month in detail, bills, saved months',
-  JSON.stringify(await order(p)) === JSON.stringify(['notice', 'hero', 'actionBanner', 'payCard', 'trSec', 'payDetails', 'accounts', 'histBox']), JSON.stringify(await order(p)));
+check('Pay tab order: one notice, the hero, the reminders line, pay, transfers, This month in detail, bills (no Saved months since 2.9.1)',
+  JSON.stringify(await order(p)) === JSON.stringify(['notice', 'hero', 'actionBanner', 'payCard', 'trSec', 'payDetails', 'accounts']), JSON.stringify(await order(p)));
 check('The notice holds only the example banner', await p.isVisible('#exampleBanner .banner') && (await p.$$('#notice .banner, #notice .card')).length === 1 && (await T(p, '#whatsNew')) === '' && (await T(p, '#restoreOffer')) === '');
 const nudge = await p.$eval('#actionBanner .banner', b => ({ h: b.offsetHeight, t: b.innerText, ws: getComputedStyle(b.querySelector('.t')).whiteSpace }));
 check('The Gym nudge is one line under the hero, with View ›', /^Gym in \d+ days/.test(nudge.t) && nudge.t.includes('View ›') && nudge.h < 60 && nudge.ws === 'nowrap', JSON.stringify(nudge));
@@ -23,9 +23,10 @@ check('"This month in detail" is closed, with the left over beside it', !(await 
   (await T(p, '#payDetails summary')).startsWith('This month in detail') && (await T(p, '#payDetailsSum')) === (await p.textContent('#heroFloat')) + ' left over', await T(p, '#payDetails summary'));
 check('…holding Not every month, the one-offs, the account figures and the totals', await p.$$eval('#payDetails .inner > *', l => l.map(e => e.id).join(',')) === 'nmCard,oneOffCard,floatCards,stats');
 const note = await T(p, '#nmNote');
-check('A line under the transfers names the bill that isn\'t monthly', note === 'Includes 1 bill that isn\'t monthly: £168.00 — see This month in detail.', note);
-await p.click('#nmNote'); await p.waitForTimeout(400);
-check('…and opens This month in detail at Not every month', await p.$eval('#payDetails', d => d.open) && await inView(p, '#nmCard') && await p.evaluate(() => document.activeElement.id) === 'dueH');
+check('A line under the transfers names the bill that isn\'t monthly (2.9.1: no "see This month in detail")', note === 'Includes 1 bill that isn\'t monthly: £168.00.', note);
+check('…as plain text, not a button', await p.$eval('#nmNote', e => e.tagName === 'P' && !e.hasAttribute('tabindex') && !e.querySelector('button, .go')));
+await p.click('#payDetails summary'); await p.waitForTimeout(400);
+check('…and This month in detail, just below it, lists that bill first, under Not every month', await p.$eval('#payDetails', d => d.open) && await inView(p, '#nmCard') && (await T(p, '#nmCard')).includes('£168.00'));
 await p.click('#payDetails summary'); await p.waitForTimeout(100);
 check('Closed by hand, it stays closed in a month with one-offs (December)', !(await p.$eval('#payDetails', d => d.open)));
 await p.click('#next'); await p.waitForTimeout(150);
@@ -94,12 +95,10 @@ check('The hint under each box says it\'s estimated', hintA === 'Using Oct 2026:
 check('…and the banner says the transfers use last month\'s pay', (await T(p, '#payBanner')).includes("These transfers use last month's pay."));
 let nov = (await LS(p, K.mon))['2026-11'];
 check('Saved with payEstimated for both, the figures kept', JSON.stringify(nov.payEstimated) === '{"alex":true,"sam":true}' && nov.pay.alex === 2150, JSON.stringify(nov));
-await p.click('#histBox summary'); await p.waitForTimeout(100);
-check('Saved months marks the figures as estimated', (await T(p, '#hist')).includes('Alex £2,150.00 (estimated)'), await T(p, '#hist'));
 await p.click('#t-analysis'); await p.waitForTimeout(300);
 const bars = await p.$$eval('#anMonths svg path[data-kind]', l => l.map(e => e.getAttribute('data-kind')));
 check('Analysis: November is hatched (estimated), with no predicted line', bars[3] === 'projected' && (await p.$$('#anMonths svg [data-kind="predicted"]')).length === 3, bars.join(','));
-check('The monthly picture still averages the typed months only', (await T(p, '#anPicture')).includes('Alex £2,157.67 (average of 3 months)'), await T(p, '#anPicture'));
+check('The monthly picture still averages the typed months only (in its figures since 2.9.1)', (await p.$eval('#anPictureTable', e => e.textContent)).includes("Alex's pay (average of 3 months)£2,157.67"), await p.$eval('#anPictureTable', e => e.textContent));
 // F. this month on the chart
 const cur = await p.$$eval('#anMonths svg [data-current]', l => Object.fromEntries(l.map(e => [e.tagName, [e.getAttribute('stroke') || e.getAttribute('fill'), e.getAttribute('stroke-width') || e.getAttribute('font-weight'), e.textContent]])));
 check('Month by month: November\'s bar has a 2px ink outline and its label is bold ink', JSON.stringify(cur) === JSON.stringify({ text: ['var(--ink)', '700', 'Nov'], path: ['var(--ink)', '2', ''] }), JSON.stringify(cur));
@@ -137,9 +136,7 @@ check('Estimated pay is said at the end', String(await p.evaluate(() => window._
 
 // ---------- D. Saved months ----------
 await p.click('#prev'); await p.waitForTimeout(150);
-const hist = await p.$$eval('#hist > *', l => l.map(e => e.className === 'mhead' ? '# ' + e.textContent : e.querySelector('b').textContent + ' | ' + e.querySelectorAll('span')[1].textContent));
-check('"Saved months": Ahead (December), then This month and earlier', (await T(p, '#histBox summary')) === 'Saved months' && hist[0] === '# Ahead' && hist[1].startsWith('December 2026') && hist[2] === '# This month and earlier' && hist[3].startsWith('November 2026'), hist.join(' / '));
-check('A month with no pay typed reads "Pay not typed in"', hist[1] === 'December 2026 | Pay not typed in', hist[1]);
+check('2.9.1: no Saved months list (the months are still saved, and the arrows and swipe still reach them)', (await p.$('#histBox')) === null && (await p.$('#hist')) === null);
 check('No JS errors (example)', p.errs.length === 0, p.errs.join(' | '));
 
 // ---------- G, J4. Settings order and What changed ----------
@@ -148,7 +145,7 @@ const so = await p.$$eval('#tab-settings > details, #tab-settings > section', l 
 check('Settings order: … Payday, Appearance, Reminders & notifications, App lock, Backup, Help, About',
   JSON.stringify(so) === JSON.stringify(['sPeople', 'sAccounts', 'sBills', 'sIncome', 'sBudget', 'sSavings', 'sPayday', 'sLook', 'sNotify', 'sLock', 'sBackup', 'sHelp', 'About']), so.join(','));
 check('About › What changed: closed, this version and its What\'s new lines', !(await p.$eval('#whatChanged', d => d.open)) &&
-  await p.$eval('#whatChanged', d => d.textContent.includes('In version 2.9:') && d.querySelectorAll('li').length === 3) && await p.isVisible('#copyDetails'));
+  await p.$eval('#whatChanged', d => d.textContent.includes('In version 2.10.1:') && d.querySelectorAll('li').length === 3) && await p.isVisible('#copyDetails'));
 // J3: a monthly subscription's renewal reminder defaults to a week before.
 await p.click('#sBills summary'); await p.waitForTimeout(80);
 await p.click('#bill_x11 > button'); await p.waitForTimeout(80);
@@ -183,8 +180,8 @@ check('Setup step 5: an account that isn\'t for bills is one line with "+ Add a 
 check('…each with its colour stripe and a full label', await p.$$eval('.su-bline', l => l.every(e => parseFloat(getComputedStyle(e).borderLeftWidth) === 5 && e.querySelector('button').getAttribute('aria-label').startsWith('Add a bill paid from '))));
 await p.click('#su_next'); await SETUP_FILL[6](p); await p.click('#su_next'); await p.waitForTimeout(100);
 await p.click('#su_finish'); await p.waitForTimeout(300); await skipTour(p);
-check('After setup: (at most one notice), hero, pay, transfers, This month in detail (closed), bills, saved months',
-  JSON.stringify((await order(p)).filter(x => x !== 'notice' && x !== 'actionBanner')) === JSON.stringify(['hero', 'payCard', 'trSec', 'payDetails', 'accounts', 'histBox']) &&
+check('After setup: (at most one notice), hero, pay, transfers, This month in detail (closed), bills',
+  JSON.stringify((await order(p)).filter(x => x !== 'notice' && x !== 'actionBanner')) === JSON.stringify(['hero', 'payCard', 'trSec', 'payDetails', 'accounts']) &&
   (await p.$$('#notice .card, #notice .banner')).length <= 1 && !(await p.$eval('#payDetails', d => d.open)), JSON.stringify(await order(p)));
 check('No JS errors (setup)', p.errs.length === 0, p.errs.join(' | '));
 await ctx.close();
@@ -221,15 +218,14 @@ for (const [w, h, dark, large] of [[412, 915, false, false], [360, 740, true, tr
   await ctx.close();
 }
 
-// Keyboard: Tab reaches Share after the transfers' "?", and the summary of This month in detail after the last transfer.
+// Keyboard: Tab reaches Share straight after the pay card, and the summary of This month in detail after the last transfer.
 ({ ctx, p } = await session({ today: TODAY }));
 await p.click('#su_example'); await p.waitForTimeout(300);
-await p.focus('#trSec .helpq'); await p.keyboard.press('Tab');
-check('Keyboard: after the transfers\' "?" comes Share', await p.evaluate(() => document.activeElement.id) === 'shareTransfers');
-await p.focus('#steps li:last-child .copy'); await p.keyboard.press('Tab');
-check('…after the last transfer, the line about bills that aren\'t monthly, then This month in detail', await p.evaluate(() => document.activeElement.id) === 'nmNote');
+await p.evaluate(() => { const f = [...document.querySelectorAll('#payCard input, #payCard button, #payCard a')].filter(x => x.getClientRects().length); f[f.length - 1].focus(); });
 await p.keyboard.press('Tab');
-check('…then the summary of This month in detail', await p.evaluate(() => document.activeElement.parentElement.id) === 'payDetails');
+check('Keyboard: after the pay card comes Share (no "?" in between since 2.9.1)', await p.evaluate(() => document.activeElement.id) === 'shareTransfers', await p.evaluate(() => document.activeElement.id || document.activeElement.className));
+await p.focus('#steps li:last-child .copy'); await p.keyboard.press('Tab');
+check('…after the last transfer, the summary of This month in detail (the line about bills that aren\'t monthly is text, not a stop)', await p.evaluate(() => document.activeElement.parentElement.id) === 'payDetails');
 await p.keyboard.press('Enter'); await p.waitForTimeout(100);
 check('Enter opens it', await p.$eval('#payDetails', d => d.open));
 await ctx.close();

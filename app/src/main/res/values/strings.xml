@@ -8,6 +8,7 @@
     <string name="lock_unavailable">App lock is on, but this phone has no screen lock set up, so Dovetail opened without it.</string>
     <string name="share_title">Save or send your Dovetail backup</string>
     <string name="share_failed">Couldn\'t prepare the file to share.</string>
+    <string name="share_update_failed">Couldn\'t prepare the update file.</string>
     <string name="feedback_no_email">There\'s no email app on this phone. Write to %1$s.</string>
     <string name="share_export_title">Share Dovetail export</string>
     <string name="notify_channel">Reminders</string>

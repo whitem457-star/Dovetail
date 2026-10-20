@@ -47,9 +47,6 @@ test('chart window, actual months and what makes a month differ', () => {
   assert.equal(P.extrasText(feb, true), 'TV Licence £43.64, Boiler £900.00 (one-off), Refund +£60.00 (one-off)');
   assert.equal(feb.billsTotal + feb.outTotal, 943.64);
   const keys = P.chartMonths('2026-11');
-  assert.equal(P.oneOffsLine(c, m2, keys, false), 'One-offs: Oct 2026 Overdraft from last month £95.00; Feb 2027 Boiler £900.00');
-  assert.equal(P.oneOffsLine(c, m2, keys, true), 'One-offs: Oct 2026 Overdraft from last month £95.00; Feb 2027 Boiler £900.00; Feb 2027 Refund +£60.00');
-  assert.equal(P.oneOffsLine(c, {}, keys, true), '');
   // the charts over the window: hand-checked against the monthly base of £4,038.93 (March, no irregular bills)
   const h = P.heavyLight(c, m, '2026-11', keys);
   assert.deepEqual(h.months.map(x => x.actual), [false, false, true, false, false, false, false, false, false, false, false, false]);

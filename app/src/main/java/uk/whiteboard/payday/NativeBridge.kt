@@ -5,7 +5,7 @@ import org.json.JSONArray
 
 /**
  * The page's window.PaydayNative object. Kept deliberately small: backups, sharing and importing files, sharing the
- * month's transfers as text, sending feedback by email, the app lock, the theme and reminder notifications.
+ * month's transfers as text (with an update file), sending feedback by email, the app lock, the theme and reminder notifications.
  * Only the app's own bundled page is ever loaded (navigation elsewhere is blocked), so nothing else can
  * call these methods. They run on WebView's background thread; UI work is posted to the main thread.
  */
@@ -15,6 +15,7 @@ class NativeBridge(private val host: Host, private val store: BackupStore) {
         fun shareBackup(json: String, fileName: String)
         fun shareFiles(files: List<ShareFile>)
         fun shareText(text: String, title: String)
+        fun shareUpdate(json: String, fileName: String, text: String, title: String)
         fun sendFeedback(subject: String, body: String)
         fun pickBackupFile()
         fun lockAvailable(): Boolean
@@ -66,6 +67,21 @@ class NativeBridge(private val host: Host, private val store: BackupStore) {
     fun shareText(text: String, title: String): Boolean {
         if (text.isBlank() || text.length > MAX_TEXT_CHARS) return false
         host.runOnMain { host.shareText(text, title.take(200)) }
+        return true
+    }
+
+    /**
+     * The Pay tab's "Share" with a household set up (2.10): the month's transfers as the message, with the whole backup
+     * attached as an update file for the other phone to open. The file must be a backup no bigger than the other phone
+     * will open ([MainActivity.MAX_IMPORT_BYTES]) and the text at most [MAX_TEXT_CHARS]; anything else is refused (the
+     * page then says it couldn't prepare the file).
+     */
+    @JavascriptInterface
+    fun shareUpdate(json: String, fileName: String, text: String, title: String): Boolean {
+        if (json.length > MainActivity.MAX_IMPORT_BYTES || json.toByteArray(Charsets.UTF_8).size > MainActivity.MAX_IMPORT_BYTES) return false
+        if (!BackupStore.looksLikeBackup(json)) return false
+        if (text.isBlank() || text.length > MAX_TEXT_CHARS) return false
+        host.runOnMain { host.shareUpdate(json, fileName, text, title.take(200)) }
         return true
     }
 

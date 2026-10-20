@@ -42,6 +42,11 @@ function defaultMonth(pc,today){var t=today||todayStr();pc=pc||{};
 function nextPayday(pc,today){var t=today||todayStr(),cm=t.slice(0,7);if(!pc||!pc.day)return null;
   for(var o=0;o<3;o++){var k=shiftMonth(cm,o),q=k.split("-").map(Number),d=paydayIn(pc,q[0],q[1]);if(d&&d>=t)return {date:d,month:budgetMonthOfPay(pc,k)}}
   return null}
+/* The years the month picker offers (2.10): last year to two years ahead, stretched back to the earliest saved month (30
+   years at most) and to take in the month on screen. keys = saved month keys; now, shown = "YYYY-MM". */
+function pickerYears(keys,now,shown){var y0=Number(now.slice(0,4)),lo=y0-1,hi=y0+2,ys=Number(shown.slice(0,4));
+  arr(keys).forEach(function(k){if(/^\d{4}-\d{2}$/.test(k))lo=Math.min(lo,Math.max(y0-30,Number(k.slice(0,4))))});
+  lo=Math.min(lo,ys);hi=Math.max(hi,ys);var out=[];for(var y=lo;y<=hi;y++)out.push(y);return out}
 function shiftMonth(k,by){var p=k.split("-").map(Number);var m=p[1]-1+by;var y=p[0]+Math.floor(m/12);m=((m%12)+12)%12;return y+"-"+String(m+1).padStart(2,"0")}
 function mNum(k){return Number(k.split("-")[1])}
 function mLabel(k){var p=k.split("-");return MN[Number(p[1])-1]+" "+p[0]}
@@ -100,6 +105,15 @@ function normMonths(m){var out={};if(!isObj(m))return out;m=clone(m);
 /* A notification time "HH:MM" between 06:00 and 22:00 (clear of midnight); anything unreadable is 09:00. */
 function notifyTime(t){if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(t||""))return "09:00";return t<"06:00"?"06:00":t>"22:00"?"22:00":t}
 function accById(c,id){for(var i=0;i<c.accounts.length;i++)if(c.accounts[i].id===id)return c.accounts[i];return null}
+/* Whether two sets of settings are the same household (2.10: an update file from the other phone): they share an account.
+   Account ids are random (uid), so households set up separately never share one; 1.x upgrades keep the 1.x ids, but 1.x
+   was never released. */
+function sameHousehold(a,b){var ids={};arr(a&&a.accounts).forEach(function(x){if(x&&x.id)ids[x.id]=true});
+  return arr(b&&b.accounts).some(function(x){return !!(x&&x.id&&ids[x.id]===true)})}
+/* Whether a month on this phone was saved after a backup was (2.10: an update file that would undo newer ticks or pay).
+   savedAt and each month's updatedAt are ISO times; anything unreadable counts as not newer. */
+function changedSince(months,savedAt){var t=Date.parse(savedAt);if(isNaN(t))return false;
+  return Object.keys(months||{}).some(function(k){var m=months[k],u=m&&typeof m.updatedAt==="string"?Date.parse(m.updatedAt):NaN;return !isNaN(u)&&u>t})}
 /* An account's parent is where its leftover goes. Missing accounts, itself and loops count as "keeps its leftover". */
 function parentId(c,id){var a=accById(c,id);if(!a||!a.leftoverTo||a.leftoverTo===id||!accById(c,a.leftoverTo))return null;
   var seen={},x=a.leftoverTo,g=0;seen[id]=1;

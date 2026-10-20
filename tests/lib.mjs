@@ -67,6 +67,7 @@ const MOCK = () => {
     setNotificationsEnabled(on) { st.calls.push(['notify', on]); save(); },
     setNotificationSchedule(j) { st.schedules = (st.schedules || 0) + 1; st.schedule = JSON.parse(j); st.calls.push(['schedule', st.schedule.entries.length]); save(); return true; },
     shareText(t, title) { st.calls.push(['shareText', title]); st.lastText = t; save(); return true; },
+    shareUpdate(json, name, t, title) { st.calls.push(['shareUpdate', name, title]); st.lastUpdate = { json, name, text: t, title }; save(); return !st.updateFails; },
     sendFeedback(subject, body) { st.calls.push(['feedback', subject]); st.lastFeedback = { subject, body }; save(); return true; },
     shareFiles(j) { const f = JSON.parse(j); st.calls.push(['shareFiles', f.map(x => [x.name, x.mime])]); st.lastFiles = f; save(); return true; },
   };

@@ -17,7 +17,7 @@ function accountName(c,id){var a=accById(c,id);return a?(a.name||"Unnamed accoun
 function paydayText(pc){pc=pc||{};if(!pc.day)return "not set";
   if(pc.day==="last")return "the last working day of the month";
   return ordinal(Number(pc.day))+" of the month"+(pc.weekend!==false?" (the Friday before if it falls on a weekend)":"")}
-/* Months with anything saved in them (typed pay, ticks or one-offs), oldest first: the same months as "Saved months". */
+/* Months with anything saved in them (typed pay, ticks or one-offs), oldest first: the months the exports list. */
 function savedMonthKeys(months){return Object.keys(months).filter(function(k){var d=months[k];return /^\d{4}-\d{2}$/.test(k)&&d&&typeof d==="object"&&
   ((d.pay&&Object.keys(d.pay).some(function(x){return d.pay[x]!=null}))||(d.done&&Object.keys(d.done).some(function(s){return d.done[s]!=null&&d.done[s]!==false}))||(arr(d.oneOffs).length))}).sort()}
 /* One saved month as figures: each person's typed pay (null if not typed, or only estimated: payIsTyped), the float, ticks
@@ -120,6 +120,10 @@ function transfersText(c,k,r,done,payInfo){done=done||{};var pd=paydayFor(c.payd
   else if(r.floats.length)L.push((r2(r.flt)<0?"Short this month: ":"Left over this month: ")+fmt(Math.abs(r.flt))+" in "+accountName(c,r.floats[0].id));
   if(est.length)L.push("Amounts use estimated pay for "+listAnd(est)+".");
   return L.join("\n")}
+/* Share with a household set up (2.10): the transfers are the message, and an update file (the whole backup) goes with it
+   for the other phone to open. today = "YYYY-MM-DD". */
+function updateFileName(today){return "Dovetail-update-"+fmtDate(today).replace(/ /g,"-")+".json"}
+function updateText(transfers){return transfers+"\n\nTap the file to update Dovetail on your phone."}
 
 /* "Send feedback" (2.9): an email to the support address with the app details (version and device facts only, never
    names or amounts). In the app the email app opens through the bridge; in a browser, through the mailto link. */

@@ -1,5 +1,5 @@
 /* Dovetail: the page (DOM, storage, Android bridge). Uses the pure functions in calc.js, migrate.js and analysis.js. */
-var VERSION="2.9",SCHEMA=5,BACKUP_VERSION=5;
+var VERSION="2.10.1",SCHEMA=5,BACKUP_VERSION=5;
 /* ---------- constants & helpers ---------- */
 /* COLOURS (account colours) is in calc.js, which setup's pure helpers share. */
 function $(id){return document.getElementById(id)}
@@ -110,8 +110,9 @@ window.paydayNativeEvent=function(type,value,ok){
   toast(ok?(value?"App lock is on":"App lock is off"):"App lock wasn't changed");if(tab==="settings")renderLockSet()};
 /* Leaving the app (or Android closing it): save anything still waiting on a short timer, then back up straight away. */
 document.addEventListener("visibilitychange",function(){if(document.visibilityState==="visible"&&cfg){syncFromStorage();return}if(document.visibilityState!=="hidden"||!cfg)return;
-  try{if(saveT){clearTimeout(saveT);saveT=null;flushMonth()}if(cfgT||remT){clearTimeout(cfgT);clearTimeout(remT);cfgT=remT=null;saveCfg(true);afterCfgChange()}}catch(e){}
-  if(nbT)flushNativeBackup();if(schT)flushSchedule()});
+  savePending();if(nbT)flushNativeBackup();if(schT)flushSchedule()});
+/* Anything typed that's still waiting on a short timer, saved now (leaving the app, or sending an update file). */
+function savePending(){try{if(saveT){clearTimeout(saveT);saveT=null;flushMonth()}if(cfgT||remT){clearTimeout(cfgT);clearTimeout(remT);cfgT=remT=null;saveCfg(true);afterCfgChange()}}catch(e){}}
 
 var cfg,months,wealthRaw=null,storageOK=true;
 var monthKey=defaultMonth({}),tab="pay";
@@ -240,6 +241,8 @@ function renderResults(){
   });
   if(!r.steps.length)ol.appendChild(el("li","empty small muted","No transfers needed this month."));
   $("progressText").textContent=r.steps.length?nDone+" of "+r.steps.length+" done":"";$("shareTransfers").hidden=!r.steps.length;
+  $("shareTransfers").setAttribute("aria-label",sendsUpdate()?"Share this month's transfers or an update file":"Share this month's transfers");
+  if(sendsUpdate())$("shareTransfers").setAttribute("aria-haspopup","dialog");else $("shareTransfers").removeAttribute("aria-haspopup");
   $("payDetailsSum").textContent=r2(r.flt)<0?fmt(-r.flt)+" short":fmt(r.flt)+" left over";
   var pd=$("payDetails"),want=payDetailsOpen!=null?payDetailsOpen:curOneOffs().length>0;if(pd.open!==want){pdExpect=want;pd.open=want}
   $("progressBar").style.width=(r.steps.length?Math.round(100*nDone/r.steps.length):0)+"%";
@@ -259,14 +262,13 @@ function renderResults(){
       d.appendChild(el("span","k",b.name+(on?"":" (not this month)")+(b.savings?" · savings":"")));d.appendChild(el("span","v",on?fmt(num(b.amount)):"–"));rr.appendChild(d)});
     if(!rr.firstChild)rr.appendChild(el("div","small muted","No bills from this account."));
     box.appendChild(rr);al.appendChild(box)});
-  renderHistory();
 }
 /* The first thing on the Pay tab: what's left this month (all floats together), progress through the transfers, and
    a warning if the figures don't reconcile (nothing is shown when they do). */
 function renderHero(r,nDone){
   var box=clear($("hero")),n=r.steps.length,neg=r2(r.flt)<0;box.classList.toggle("neg",neg);
   box.hidden=!cfg.people.length||!cfg.accounts.length;if(box.hidden){heroShown=null;return}
-  var main=el("div","hmain");var h=el("h2","lbl",neg?"Short this month":"Left over this month");h.id="heroH";var hw=el("div","hh");hw.appendChild(h);hw.appendChild(helpBtn("left"));main.appendChild(hw);
+  var main=el("div","hmain");var h=el("h2","lbl",neg?"Short this month":"Left over this month");h.id="heroH";main.appendChild(h);
   var len=fmt(r.flt).length,v=el("div","hv mny"+(len>11?" longer":len>9?" long":""));v.id="heroFloat";rollHero(v,r.flt);main.appendChild(v);
   var wh=el("div","where");if(r.floats.length===1){wh.appendChild(avatar(r.floats[0].id));wh.appendChild(document.createTextNode("in "+accName(r.floats[0].id)))}
   else wh.appendChild(document.createTextNode("across "+plural(r.floats.length,"account")));main.appendChild(wh);box.appendChild(main);
@@ -321,19 +323,18 @@ function openOneOffItem(id){openOne=id;openPayDetails();keepScroll(renderOneOffs
 /* "This month in detail" (2.7): "Not every month", the one-offs, each account's figures and the month's totals. Closed,
    unless the month on screen has one-offs (something typed for that month, which changes its transfers), until it's
    opened or closed by hand: that choice is kept for the session only (payDetailsOpen, null until then). Anything that
-   leads to something inside it (a one-off's link, Reminders' "Open <month>", the line under the transfers, the tour)
+   leads to something inside it (a one-off's link, Reminders' "Open <month>", the tour)
    opens it first, quietly (pdExpect), so only that thing is scrolled to. */
 var payDetailsOpen=null,pdExpect=null;
 function openPayDetails(){payDetailsOpen=true;var d=$("payDetails");if(!d.open){pdExpect=true;d.open=true}}
 $("payDetails").addEventListener("toggle",function(){var d=$("payDetails"),quiet=pdExpect===d.open;pdExpect=null;if(quiet)return;
   payDetailsOpen=d.open;if(d.open)reveal(d)});
 /* "Not every month": bills that aren't paid monthly that are due in the month on screen, with a link to all of them.
-   When there are some, a line under the transfers says so and opens it. */
+   When there are some, a line under the transfers says so (This month in detail, just below, lists them). */
 function renderNotEvery(){
   var box=clear($("due")),r=notEveryMonth(cfg,monthKey,0),tot=$("dueTotal");tot.textContent=r.due.length>1?fmt(r.dueTotal):"";$("dueTotalLbl").textContent=r.due.length>1?"Total ":"";
   var note=clear($("nmNote"));note.hidden=!r.due.length;
-  if(r.due.length){note.appendChild(document.createTextNode("Includes "+plural(r.due.length,"bill")+" that "+(r.due.length===1?"isn't":"aren't")+" monthly: "+fmt(r.dueTotal)+" \u2014 "));
-    note.appendChild(el("span","go","see This month in detail"));note.appendChild(document.createTextNode("."))}
+  if(r.due.length)note.textContent="Includes "+plural(r.due.length,"bill")+" that "+(r.due.length===1?"isn't":"aren't")+" monthly: "+fmt(r.dueTotal)+".";
   if(!r.any){box.appendChild(el("div","small muted","Every bill is paid monthly. Bills paid only in some months, like a yearly insurance, show here."));return}
   if(r.due.length){var d=el("div","rows");r.due.forEach(function(b){var row=el("div","row lined"),k=el("span","k");k.appendChild(avatar(b.account));var kt=el("span","kt",b.name);kt.appendChild(el("small",null,"From "+accName(b.account)));k.appendChild(kt);row.appendChild(k);
     row.appendChild(moneyEl(b.amount,"v"));d.appendChild(row)});box.appendChild(d)}
@@ -400,23 +401,6 @@ function oneOffNew(){
   var cn=el("button","btn ghost","Cancel");cn.addEventListener("click",function(){draftOne=null;openOne=null;keepScroll(renderOneOffs)});
   br.appendChild(add);br.appendChild(cn);d.appendChild(br);return d}
 
-/* "Saved months": every month with pay, ticks or one-offs saved, newest first, in two groups: months ahead of the one on
-   screen (a one-off saved for later puts a month there), then this month and earlier. */
-function renderHistory(){
-  var h=clear($("hist")),keys=Object.keys(months).filter(function(k){var d=months[k];return d&&((d.pay&&Object.keys(d.pay).some(function(x){return d.pay[x]!=null}))||(d.done&&Object.keys(d.done).length)||(d.oneOffs&&d.oneOffs.length))}).sort().reverse();
-  if(!keys.length){h.appendChild(el("div","muted small","Months you've saved appear here."));return}
-  var group="";
-  keys.slice(0,36).forEach(function(k){var d=months[k],b=el("button","hrow"),g=k>monthKey?"Ahead":"This month and earlier";
-    if(g!==group){group=g;var gh=el("div","mhead",g);gh.setAttribute("role","heading");gh.setAttribute("aria-level","3");h.appendChild(gh)}
-    b.appendChild(el("b",null,mLabel(k)));
-    var r=calc(cfg,mNum(k),payFor(cfg,months,k),arr(d.oneOffs));
-    b.appendChild(el("span","r","Left over "+fmt(r.flt)));
-    var nd=r.steps.filter(function(s){return d.done&&d.done[s.id]!=null&&d.done[s.id]!==false}).length;
-    var any=cfg.people.some(function(p){return d.pay&&d.pay[p.id]!=null}),pe=d.payEstimated||{};
-    var pays=any?cfg.people.map(function(p){return (p.name||"Pay")+" "+(d.pay[p.id]!=null?fmt(num(d.pay[p.id]))+(pe[p.id]?" (estimated)":""):"not typed in")}).join(" · "):cfg.people.length?"Pay not typed in":"";
-    b.appendChild(el("span","small muted",pays||"No pay"));b.appendChild(el("span","r small muted",nd+" of "+r.steps.length+" done"));
-    b.addEventListener("click",function(){goMonth(k);toTop()});h.appendChild(b)});
-}
 function toggleDone(id,amt){
   var focusedTick=!!(document.activeElement&&document.activeElement.classList&&document.activeElement.classList.contains("tick"));
   var p=readPay();cur=cur||{};
@@ -448,31 +432,46 @@ function flushMonth(){
   var pe={};Object.keys((cur&&cur.payEstimated)||{}).forEach(function(id){if(cur.payEstimated[id]&&pay[id]!=null)pe[id]=true});
   if(Object.keys(pe).length)body.payEstimated=pe;else delete body.payEstimated;
   // cur stays the working copy (an open one-off editor holds its objects); the saved month is an independent copy.
-  months[k]=clone(body);cur=body;saveMonths();renderHistory();
+  months[k]=clone(body);cur=body;saveMonths();
 }
 /* "Share" beside the transfers (2.7): the month on screen's transfers as text (transfersText in export.js), ticks
-   included, through the phone's share sheet; in a browser, the browser's own sharing, or copied. */
-function shareTransfers(){var p=readPay(),r=calc(cfg,mNum(monthKey),p.vals,curOneOffs());
-  var text=transfersText(cfg,monthKey,r,(cur&&cur.done)||{},{estimated:estimatedPeople(p).map(function(x){return x.name||"someone"})}),copy=function(){copyText(text,"Transfers copied")};
-  if(NATIVE&&typeof NATIVE.shareText==="function"){if(!nativeCall(function(){return NATIVE.shareText(text,"Dovetail transfers for "+mLabel(monthKey))},false))copy();return}
+   included, through the phone's share sheet; in a browser, the browser's own sharing, or copied. In the app with a
+   household set up (2.10.1), Share asks first: the transfers as a message, or an update file for the other phone (the
+   whole backup, which the other phone opens to bring itself up to date: see offerImport). WhatsApp drops the message
+   when a file goes with it, so they're two choices rather than one share (2.10 sent both together). The example
+   household sends the text straight away. */
+function transfersMessage(){var p=readPay(),r=calc(cfg,mNum(monthKey),p.vals,curOneOffs());
+  return {text:transfersText(cfg,monthKey,r,(cur&&cur.done)||{},{estimated:estimatedPeople(p).map(function(x){return x.name||"someone"})}),title:"Dovetail transfers for "+mLabel(monthKey)}}
+function shareTransfers(){if(sendsUpdate()){openShareChoice();return}shareTransfersText()}
+function openShareChoice(){var col=el("div","sharechoice");
+  var a=el("button","btn","Send the transfers as a message");a.type="button";a.id="shareAsText";a.addEventListener("click",function(){closeSheet();shareTransfersText()});
+  var b=el("button","btn","Send an update for the other phone");b.type="button";b.id="shareAsFile";b.addEventListener("click",function(){closeSheet();shareUpdateFile()});
+  col.appendChild(a);col.appendChild(b);openSheet("Share this month",[col],$("shareTransfers"),{quietClose:true})}
+/* The update file, with the transfers as its message too (an email keeps it; WhatsApp doesn't). Anything still waiting is saved first. */
+function shareUpdateFile(){var m=transfersMessage();savePending();
+  if(!nativeCall(function(){return NATIVE.shareUpdate(backupText(),updateFileName(todayStr()),updateText(m.text),m.title)},false))toast("Couldn't prepare the update file.")}
+function shareTransfersText(){var m=transfersMessage(),text=m.text,title=m.title,copy=function(){copyText(text,"Transfers copied")};
+  if(NATIVE&&typeof NATIVE.shareText==="function"){if(!nativeCall(function(){return NATIVE.shareText(text,title)},false))copy();return}
   if(navigator.share){try{navigator.share({text:text}).catch(function(e){if(!e||e.name!=="AbortError")copy()})}catch(e){copy()}return}
   copy()}
 $("shareTransfers").addEventListener("click",shareTransfers);
-$("nmNote").addEventListener("click",function(){openPayDetails();var h=$("dueH");reveal($("nmCard"));if(h){h.tabIndex=-1;try{h.focus({preventScroll:true})}catch(e){}}});
+function sendsUpdate(){return !!(NATIVE&&typeof NATIVE.shareUpdate==="function"&&backupsAllowed())}
 function copyText(t,msg){var done=function(){toast(msg||"Copied")};
   try{navigator.clipboard.writeText(t).then(done,function(){fallbackCopy(t);done()})}catch(e){fallbackCopy(t);done()}}
 function fallbackCopy(t){var i=document.createElement("textarea");i.value=t;i.setAttribute("readonly","");i.style.position="fixed";i.style.opacity="0";document.body.appendChild(i);i.select();try{document.execCommand("copy")}catch(e){}i.remove()}
 /* "What's new" on the Pay tab, the first time the app opens after an update (cfg.lastVersion is the version last
    opened). A new install, the example and a restore during setup don't show it. Dismissable; it links to nothing. */
 var whatsNew=false;
-var WHATS_NEW=["Payday is now called Dovetail. Your figures, backups and settings are just as they were.",
-  "Backup and export files you share are now named \u201cdovetail-\u2026\u201d. Backups made before still open as usual.",
-  "Settings \u203a About has \u201cSend feedback\u201d: it opens your email app with the app details filled in, never your names or amounts."];
-/* One notice at most above the hero (2.7), the first there is of: an automatic backup to restore, What's new, and the
+var WHATS_NEW=["Share now asks what to send: the transfers as a message, or an update file for the other phone. WhatsApp won't send both at once.",
+  "On the other phone, tap the update file, then Update, to show the same bills, pay and ticks.",
+  "Anything changed on the other phone is replaced by the next update, so make changes on one phone."];
+/* One notice at most above the hero (2.7), the first there is of: an update file to open (2.10), an automatic backup to restore, What's new, and the
    example household's banner or the "Finish setting up" card. The reminders nudge is a line under the hero instead. */
-function renderNotice(){clear($("restoreOffer"));clear($("whatsNew"));clear($("exampleBanner"));
-  if(restoreOffer)renderRestoreOffer();else if(whatsNew&&!cfg.example)renderWhatsNew();else renderExampleBanner();
-  $("notice").hidden=!($("restoreOffer").firstChild||$("whatsNew").firstChild||$("exampleBanner").firstChild)}
+function renderNotice(){clear($("updateOffer"));clear($("restoreOffer"));clear($("whatsNew"));clear($("exampleBanner"));
+  // An update file from this household's other phone (2.10) comes first: it's what was just opened.
+  if(importOffer&&importOffer.update)$("updateOffer").appendChild(importOfferCard());
+  else if(restoreOffer)renderRestoreOffer();else if(whatsNew&&!cfg.example)renderWhatsNew();else renderExampleBanner();
+  $("notice").hidden=!($("updateOffer").firstChild||$("restoreOffer").firstChild||$("whatsNew").firstChild||$("exampleBanner").firstChild)}
 function renderWhatsNew(){var box=clear($("whatsNew"));if(!whatsNew||cfg.example)return;
   var c=el("div","banner good col");c.setAttribute("role","group");c.setAttribute("aria-label","What's new in Dovetail "+VERSION);c.appendChild(el("b",null,"What's new in "+VERSION));
   var ul=el("ul");WHATS_NEW.forEach(function(t){ul.appendChild(el("li",null,t))});c.appendChild(ul);
@@ -508,7 +507,7 @@ function renderSetupTips(box){
 
 /* ---------- ANALYSIS TAB ----------
    Everything is computed by analysis.js from data already in the app. Charts are inline SVG or simple HTML bars,
-   each with a "Show as table" alternative; values are never colour-only. */
+   each with a "Show the figures" table; values are never colour-only. */
 var SVGNS="http://www.w3.org/2000/svg",openCat=null;
 function fmt0(x){return gbp0.format(Math.round(x)).replace("-","−")}
 var gbp0=new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP",maximumFractionDigits:0});
@@ -516,15 +515,15 @@ function fmtK(v){var a=Math.abs(v),s=v<0?"−":"";if(a>=1e6)return s+"£"+(a/1e6
 function pct(x){return x==null?"–":(Math.round(x*1000)/10).toFixed(1).replace(/\.0$/,"")+"%"}
 function vizColour(i){return "var(--viz-"+(1+(i%8))+")"}
 function svgEl(tag,attrs,parent){var e=document.createElementNS(SVGNS,tag);for(var k in attrs)e.setAttribute(k,attrs[k]);if(parent)parent.appendChild(e);return e}
-var AN_HELP={anMonths:"months",anPicture:"picture",anCategories:"categories",anSaved:"saved",anPrices:"prices"};
+var AN_HELP={anSaved:"saved"};
 function anCard(id,title,sub){var c=el("section","card");c.id=id;var h=el("h2",null,title);h.id=id+"H";c.setAttribute("aria-labelledby",h.id);
   if(AN_HELP[id]){var hw=el("div","hh");hw.appendChild(h);hw.appendChild(helpBtn(AN_HELP[id]));c.appendChild(hw)}else c.appendChild(h);if(sub)c.appendChild(el("div","small muted",sub));return c}
-/* "Show as table": a button under a chart that reveals the same figures as a table. rows: [[cell, …], …]; first column is text, the rest numbers. */
+/* "Show the figures": a button under a chart that reveals its figures as a table. rows: [[cell, …], …]; first column is text, the rest numbers. */
 function tableToggle(card,id,head,rows){
-  var b=el("button","linkbtn small","Show as table"),wrap=el("div","tablewrap");wrap.id=id;wrap.hidden=true;wrap.tabIndex=0;wrap.setAttribute("role","region");wrap.setAttribute("aria-label",(card.querySelector("h2")||{}).textContent+" as a table");b.setAttribute("aria-expanded","false");b.setAttribute("aria-controls",id);
+  var b=el("button","linkbtn small","Show the figures"),wrap=el("div","tablewrap");wrap.id=id;wrap.hidden=true;wrap.tabIndex=0;wrap.setAttribute("role","region");wrap.setAttribute("aria-label",(card.querySelector("h2")||{}).textContent+": the figures");b.setAttribute("aria-expanded","false");b.setAttribute("aria-controls",id);
   var t=el("table"),th=el("thead"),tr=el("tr");head.forEach(function(h,i){tr.appendChild(el("th",i?"n":null,h))});th.appendChild(tr);t.appendChild(th);
   var tb=el("tbody");rows.forEach(function(r){var row=el("tr");r.forEach(function(v,i){row.appendChild(el("td",i?"n":null,v))});tb.appendChild(row)});t.appendChild(tb);wrap.appendChild(t);
-  b.addEventListener("click",function(){var open=wrap.hidden;wrap.hidden=!open;b.textContent=open?"Hide table":"Show as table";b.setAttribute("aria-expanded",open?"true":"false");if(open)reveal(wrap)});
+  b.addEventListener("click",function(){var open=wrap.hidden;wrap.hidden=!open;b.textContent=open?"Hide the figures":"Show the figures";b.setAttribute("aria-expanded",open?"true":"false");if(open)reveal(wrap)});
   card.appendChild(b);card.appendChild(wrap)}
 /* Shared chart frame: y axis with clean ticks, hairline grid, x labels, and a tooltip that follows touch, mouse or the
    arrow keys. o: {n, labels, values (for the domain), ariaLabel, tip(i) → [title, line, …], draw(svg, X, Y, slot)} */
@@ -592,24 +591,21 @@ function renderAnalysis(){
     var b=el("button","btn",cfg.bills.length?"Open Settings":"Add bills");b.style.marginTop="10px";b.addEventListener("click",goBills);e.appendChild(b);box.appendChild(e)}
   [anMonths,anPicture,anCategories,anHistory,anSaved,anPrices,anTopUps].forEach(function(f){var c=f(k);if(c)box.appendChild(c)});
 }
-/* Month by month: the float for 12 budget months (3 back, the one on screen, 8 ahead) with a verdict on this month,
-   the tightest and heaviest months ahead, and what makes each month differ. One chart: the float is income less what
-   goes out, so the outgoings (the old "heavy and light months") are in the readings and the table. */
+/* Month by month: the float for 12 budget months (3 back, the one on screen, 8 ahead). Since 2.9.1 the chart speaks for
+   itself: words above it only when a month is short or there's no pay yet. Each bar's reading (tap or arrow keys) and
+   the figures (the table) have what goes out and what makes each month differ; the chart's description for screen
+   readers still sums it up (this month, the tightest month ahead). */
 function anMonths(k){
   if(!cfg.bills.length&&!cfg.budgets.length&&!cfg.savings.length)return null;
   var keys=chartMonths(k),r=projectedFloat(cfg,months,k,keys),h=heavyLight(cfg,months,k,keys),c=anCard("anMonths","Month by month");
   var ahead=r.filter(function(x){return x.k>=k}),now=ahead[0],shortM=ahead.filter(function(x){return x.short}),low=ahead.reduce(function(a,x){return x.float<a.float?x:a},ahead[0]);
   var ex=keys.map(function(x){return monthExtras(cfg,months,x)}),why=function(i){return extrasText(ex[i],true)||"Only the monthly bills"};
   var later=shortM.filter(function(x){return x.k!==k}),noPay=avgIncome(cfg,months,k).total<=0,advice=" Move a one-off to another month or trim a spending budget.";
-  var verdict=el("div",now.short&&!noPay?"banner bad":"lead");verdict.id="anVerdict";
   // Without any pay every month is "short": that's a missing figure, not advice to trim.
-  if(noPay)verdict.textContent="Add each person's pay (or their usual pay in Settings › People) to see what's left each month.";
-  else if(now.short)verdict.textContent=mLabel(k)+" is short by "+fmt(-now.float)+"."+advice;
-  else verdict.textContent=mLabel(k)+": "+fmt(now.float)+" left over"+(later.length?".":low.k===k?", and no month ahead is tighter.":". Tightest month ahead: "+mLabel(low.k)+", "+fmt(low.float)+".");
-  c.appendChild(verdict);
-  if(later.length&&!noPay)c.appendChild(el("div","banner bad",(now.short?"Also short: ":"Short: ")+later.slice(0,3).map(function(x){return mLabel(x.k)+" by "+fmt(-x.float)}).join(", ")+(later.length>3?" and "+plural(later.length-3,"more month")+" (see the table)":"")+"."+(now.short?"":advice)));
-  var hi=h.heaviest,hx=ex[keys.indexOf(hi.k)],hw=extrasText(hx,false);
-  c.appendChild(el("div","small muted",h.flat?"About "+fmt(h.average)+" goes out every month.":"Heaviest month: "+mLabel(hi.k)+", "+fmt(hi.total)+" going out"+(hw?" ("+hw+")":"")+". Lightest: "+mLabel(h.lightest.k)+", "+fmt(h.lightest.total)+". An average month is "+fmt(h.average)+"."));
+  if(noPay||now.short){var verdict=el("div",noPay?"lead":"banner bad");verdict.id="anVerdict";
+    verdict.textContent=noPay?"Add each person's pay (or their usual pay in Settings › People) to see what's left each month.":mLabel(k)+" is short by "+fmt(-now.float)+"."+advice;
+    c.appendChild(verdict)}
+  if(later.length&&!noPay)c.appendChild(el("div","banner bad",(now.short?"Also short: ":"Short: ")+later.slice(0,3).map(function(x){return mLabel(x.k)+" by "+fmt(-x.float)}).join(", ")+(later.length>3?" and "+plural(later.length-3,"more month")+" (see the figures)":"")+"."+(now.short?"":advice)));
   // Months with typed pay are solid, with a line at what was predicted before pay was typed; the rest are hatched.
   function vsPredicted(x){if(x.predicted==null)return "";var d=x.float-x.predicted;return Math.abs(d)<0.005?"as predicted":fmt(Math.abs(d))+(d>0?" more":" less")+" than the "+fmt(x.predicted)+" predicted"}
   var cb=el("div","chartbox");c.appendChild(cb);
@@ -617,7 +613,6 @@ function anMonths(k){
     ariaLabel:"Left over each month from "+mLabel(keys[0])+" to "+mLabel(keys[keys.length-1])+". "+mLabel(k)+" (this month)"+(now.short?" short by "+fmt(-now.float):" "+fmt(now.float)+" left over")+". Tightest from "+mLabel(k)+": "+mLabel(low.k)+" "+fmt(low.float)+(shortM.length?". "+plural(shortM.length,"month")+" short":"")+". Use the arrow keys to read each month.",
     tip:function(i){var x=r[i],o=h.months[i],vp=vsPredicted(x);return [mLabel(x.k)+(x.k===k?" (this month)":"")+": "+fmt(x.float)+(x.short?" (short)":""),fmt(o.total)+" going out",why(i),x.actual?"Actual: pay typed in"+(vp?", "+vp:""):"Estimated"]}});
   var keysList=actualKeys(r,"var(--accent)");if(r.some(function(x){return x.predicted!=null}))keysList.push({label:"Predicted",line:true});if(r.some(function(x){return x.short}))keysList.push({colour:"var(--bad)",label:"Short"});c.appendChild(keyRow(keysList));
-  var ol=oneOffsLine(cfg,months,keys,true);if(ol){var o=el("div","small");o.id="anMonthsOneOffs";o.textContent=ol;c.appendChild(o)}
   tableToggle(c,"anMonthsTable",["Month","Left over","Bills","Budgets","Savings","One-offs out","Going out","What's different"],
     r.map(function(x,i){var o=h.months[i];return [monthCell(x),fmt(x.float)+(x.short?" (short)":"")+(x.predicted!=null?" (predicted "+fmt(x.predicted)+")":""),fmt(o.bills),fmt(o.budgets),fmt(o.savings),fmt(o.oneOffs),fmt(o.total),why(i)]}));
   return c}
@@ -632,10 +627,10 @@ function anPicture(k){
   c.appendChild(legendList(segs.map(function(s){return {label:s.label,colour:s.colour,value:fmt(s.value),pc:r.income>0?pct(s.value/r.income):""}})));
   if(r.income<=0)c.appendChild(el("div","lead","Add each person's pay (or their usual pay in Settings › People) to see percentages."));
   else if(r.float<-0.004)c.appendChild(el("div","lead","On average, more goes out than comes in: about "+fmt(-r.float)+" a month."));
-  var inc=r.incomeDetail,parts=inc.people.map(function(p){return (p.name||"Pay")+" "+fmt(p.avg)+(p.months?" (average of "+plural(p.months,"month")+")":" (usual pay)")});if(inc.other)parts.push("other income "+fmt(inc.other));
-  c.appendChild(el("div","small muted","Income "+fmt(r.income)+" a month: "+parts.join(", ")+"."));
-  c.appendChild(el("div","small muted","Bills that aren't paid every month are spread over the year here, so the average left over won't match any one month."));
-  tableToggle(c,"anPictureTable",["","A month","Of income"],[["Income",fmt(r.income),r.income>0?"100%":""]].concat(segs.map(function(s){return [s.label,fmt(s.value),r.income>0?pct(s.value/r.income):""]})));
+  // Each person's pay (an average of the months typed in, or their usual pay) is in the figures, under Income.
+  var inc=r.incomeDetail,of=function(v){return r.income>0?pct(v/r.income):""},incRows=inc.people.map(function(p){return [(p.name?p.name+"'s pay":"Pay")+(p.months?" (average of "+plural(p.months,"month")+")":" (usual pay)"),fmt(p.avg),of(p.avg)]});
+  if(inc.other)incRows.push(["Other income",fmt(inc.other),of(inc.other)]);
+  tableToggle(c,"anPictureTable",["","A month","Of income"],[["Income",fmt(r.income),r.income>0?"100%":""]].concat(incRows,segs.map(function(s){return [s.label,fmt(s.value),of(s.value)]})));
   return c}
 function anCategories(){
   var r=byCategory(cfg),c=anCard("anCategories","Where the money goes");
@@ -1143,7 +1138,7 @@ function exportBox(box){box.appendChild(el("h3",null,"Export for analysis"));
   var cs=el("button","btn ghost",NATIVE?"Share spreadsheet (CSV)":"Download spreadsheet (CSV)");cs.id="exportCsv";cs.addEventListener("click",function(){shareExport("csv")});
   r.appendChild(md);r.appendChild(cp);r.appendChild(cs);box.appendChild(r)}
 function renderBackupSet(){
-  var box=clear($("setBackup"));if(importOffer)box.appendChild(importOfferCard());
+  var box=clear($("setBackup"));if(importOffer&&!importOffer.update)box.appendChild(importOfferCard());
   if(NATIVE){
     box.appendChild(el("h3",null,"Automatic backups"));
     box.appendChild(el("div","small muted","Dovetail saves a backup on this phone whenever you change something. It keeps the last 10 changes and one from each of the last 14 days."));
@@ -1156,7 +1151,7 @@ function renderBackupSet(){
     var sr=el("div","btnrow"),sh=el("button","btn","Share backup file…");sh.id="shareBackup";
     sh.addEventListener("click",function(){var d=todayStr();var ok=nativeCall(function(){return NATIVE.share(backupText(),"dovetail-backup-"+d+".json")},false);if(!ok)toast("Couldn't prepare the backup file")});
     sr.appendChild(sh);sr.appendChild(importButton());box.appendChild(sr);
-    box.appendChild(el("div","small muted","Save the file to Drive, email it to yourself or keep it in Files. To put Dovetail on another phone, share the backup file to it (WhatsApp, Quick Share, email) and open the file there. It's a copy: changes made on one phone don't reach the other."));
+    box.appendChild(el("div","small muted","Save the file to Drive, email it to yourself or keep it in Files. To put Dovetail on another phone, share the backup file to it (WhatsApp, Quick Share, email) and open the file there. It's a copy: changes made on one phone don't reach the other. Share on the Pay tab sends the same file with the month's transfers, to bring the other phone up to date."));
   }else{box.appendChild(el("h3",null,"Open a backup file"));var br0=el("div","btnrow");br0.appendChild(importButton());box.appendChild(br0)}
   exportBox(box);
   box.appendChild(el("h3",null,"Copy and paste"));
@@ -1213,10 +1208,12 @@ function applyBackup(data,fromFile){
   if(!lsSet(K_CFG,c2,true)||!lsSet(K_MON,m2,true)||(wealthRaw==null&&w2!=null&&!lsSet(K_W,w2)))return false;
   cfg=c2;months=m2;wealthRaw=w2;openBill=null;openOne=null;setup=null;paySig="";quickRows=null;billQuery="";billFilter="";importOffer=null;hideUndo();return true}
 /* Just before a restore or an opened file replaces everything: an automatic backup that's kept for 30 days. */
-function keepCurrent(){if(!backupsAllowed())return;clearTimeout(nbT);nbT=null;nativeCall(function(){return typeof NATIVE.keepBackup==="function"?NATIVE.keepBackup(backupText()):NATIVE.saveBackup(backupText())})}
+function keepCurrent(){if(!backupsAllowed())return true;clearTimeout(nbT);nbT=null;
+  // true unless the kept backup couldn't be written (with no keepBackup, saveBackup skips a copy it already has: still kept).
+  return nativeCall(function(){if(typeof NATIVE.keepBackup==="function")return NATIVE.keepBackup(backupText())===true;NATIVE.saveBackup(backupText());return true},false)}
 function restoreError(r){return r==="newer"?"This backup was made by a newer version of Dovetail. Update the app first.":r==="empty"?"This backup has no accounts in it.":r==="bad"?"That backup couldn't be opened, so nothing was changed.":"Couldn't save the backup on this phone."}
 function parseBackup(text){try{var d=JSON.parse(text);return d&&d.config&&Array.isArray(d.config.bills)?d:null}catch(e){return null}}
-function afterRestore(){applyAppearance();queueSchedule();if(cfg.lastVersion!==VERSION){cfg.lastVersion=VERSION;saveCfg(true)}monthKey=defaultMonth(payCfg());if(tab==="setup"||location.hash==="#setup"){try{history.replaceState(null,"","#pay")}catch(e){}}route();paySig=peopleSig();goMonth(monthKey);if(tab==="settings")renderSettings();toast("Backup restored")}
+function afterRestore(msg){applyAppearance();queueSchedule();if(cfg.lastVersion!==VERSION){cfg.lastVersion=VERSION;saveCfg(true)}monthKey=defaultMonth(payCfg());if(tab==="setup"||location.hash==="#setup"){try{history.replaceState(null,"","#pay")}catch(e){}}route();paySig=peopleSig();goMonth(monthKey);if(tab==="settings")renderSettings();toast(msg||"Backup restored")}
 function restoreNative(name){var d=parseBackup(nativeCall(function(){return NATIVE.readBackup(name)},""));
   if(!d){toast("That backup couldn't be read");return false}
   var was=restoreOffer;keepCurrent();restoreOffer=null;var res=applyBackup(d);if(res!==true){restoreOffer=was;toast(restoreError(res));return false}
@@ -1272,38 +1269,57 @@ function renderRestoreOffer(target){
   r.appendChild(y);r.appendChild(n);c.appendChild(r);box.appendChild(c)}
 /* ---------- opening a backup file (shared from another phone, or picked with "Import a backup file…") ----------
    The file's content is checked first, then the same confirmation as restoring a pasted backup is shown, with a summary
-   of what's in the file. Nothing changes until "Replace with this backup" is tapped. */
-var importOffer=null,MAX_IMPORT=2*1024*1024;
+   of what's in the file. Nothing changes until "Replace with this backup" is tapped. A file from this household's other
+   phone (2.10) gets a shorter confirmation on the Pay tab instead, with "Update". */
+var importOffer=null,MAX_IMPORT=2*1024*1024,pickedFile=false;
 var IMPORT_FAIL={toobig:"That file is too big to be a Dovetail backup (over 2 MB). Nothing was changed.",notbackup:"That file isn't a Dovetail backup, so nothing was changed.",
   unreadable:"Couldn't read that file. Nothing was changed.",nopicker:"This phone has no file picker to choose a file with."};
-function importFailed(reason){if(reason==="cancelled")return;toast(IMPORT_FAIL[reason]||IMPORT_FAIL.unreadable)}
+function importFailed(reason){pickedFile=false;if(reason==="cancelled")return;toast(IMPORT_FAIL[reason]||IMPORT_FAIL.unreadable)}
 function whenSaved(iso){var d=new Date(iso);if(!iso||isNaN(d.getTime()))return "";return fmtDate(d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate()))+", "+pad(d.getHours())+":"+pad(d.getMinutes())}
-/* What a backup holds, after the same upgrade a restore runs (on copies; nothing is saved). */
-function backupSummary(data){try{var c2=normCfg(data.config),m2=normMonths(data.months);migrate(c2,m2,data.wealth!=null?clone(data.wealth):null);
+/* A backup's settings and months after the same upgrade a restore runs (on copies; nothing is saved), or null. */
+function backupCopy(data){try{var c2=normCfg(data.config),m2=normMonths(data.months);migrate(c2,m2,data.wealth!=null?clone(data.wealth):null);return {c:c2,m:m2}}catch(e){return null}}
+/* What a backup holds (b: its backupCopy, if already made). */
+function backupSummary(data,b){b=b||backupCopy(data);if(!b)return "";try{var c2=b.c,m2=b.m;
   var names=c2.people.map(function(p){return p.name}).filter(Boolean),saved=whenSaved(data.savedAt);
   return (saved?"Saved "+saved+". ":"")+plural(c2.people.length,"person","people")+(names.length?" ("+names.join(", ")+")":"")+", "+plural(c2.accounts.length,"account")+", "+plural(c2.bills.length,"bill")+", "+plural(usedMonths(m2,"9999-12").length,"saved month")+"."}catch(e){return ""}}
 function offerImport(text){
+  // A file picked with "Import a backup file…" is a restore chosen on purpose: always the full confirmation.
+  var picked=pickedFile;pickedFile=false;
   if(text.length>MAX_IMPORT){importFailed("toobig");return}
   if(recovering){recoverWith(text);return}
   var data=parseBackup(text);if(!data||data.app!=="payday-transfers"){importFailed("notbackup");return}
   if(num(data.version)>BACKUP_VERSION){toast(restoreError("newer"));return}
-  importOffer={data:data,summary:backupSummary(data),msg:""};
+  // A file from this household's other phone (2.10: an update sent with Share, or a backup file) is the same household
+  // brought up to date: a short confirmation at the top of the Pay tab. Any other backup gets the full one in Settings.
+  var b=backupCopy(data),update=!!(b&&!picked&&cfg.setupDone&&!cfg.example&&sameHousehold(cfg,b.c));
+  importOffer={data:data,summary:backupSummary(data,b),msg:"",update:update,newerHere:update&&changedSince(months,data.savedAt)};
+  if(update){var show=function(){afterTab("pay",function(){renderNotice();focusImportOffer()})};
+    // The tour or a help sheet would cover the card (and each has a history entry of its own): closed first.
+    if(tour||sheetOpen){endTour(false,true);closeSheet();setTimeout(show,400)}else show();return}
+  clear($("updateOffer"));
   if(!cfg.setupDone){if(setup)setup.step=1;goTab("setup");keepScroll(renderSetup)}else{openSettings("sBackup");keepScroll(renderBackupSet)}
-  var card=$("importOffer");reveal(card);var t=card&&card.querySelector("b");if(t){t.tabIndex=-1;try{t.focus({preventScroll:true})}catch(e){}}}
-function importOfferCard(){var c=el("div","banner col");c.id="importOffer";c.setAttribute("role","group");c.setAttribute("aria-label","Open a Dovetail backup");
-  c.appendChild(el("b",null,"Open this Dovetail backup?"));if(importOffer.summary)c.appendChild(el("div",null,importOffer.summary));
-  if(cfg.setupDone&&!cfg.example)c.appendChild(el("div",null,"This replaces all people, accounts, bills and saved months on this phone."+(NATIVE?" What's on this phone now is kept in the automatic backups for 30 days.":"")));
-  var r=el("div","btnrow"),y=el("button","btn"+(cfg.setupDone&&!cfg.example?" danger":""),cfg.setupDone&&!cfg.example?"Replace with this backup":"Restore this backup");y.id="importYes";
-  y.addEventListener("click",function(){var d=importOffer.data;keepCurrent();restoreOffer=null;var res=applyBackup(d,true);
-    if(res!==true){importOffer.msg=restoreError(res);rerender();return}importOffer=null;afterRestore();goTab("pay");queueNativeBackup()});
-  var n=el("button","btn ghost","Cancel");n.id="importNo";n.addEventListener("click",function(){importOffer=null;rerender();toast("Nothing was changed")});
+  focusImportOffer()}
+function focusImportOffer(){var card=document.querySelector(importOffer&&importOffer.update?"#updateOffer #importOffer":"#importOffer");reveal(card);var t=card&&card.querySelector("b");if(t){t.tabIndex=-1;try{t.focus({preventScroll:true})}catch(e){}}}
+function focusPayH(){var h=$("payH");if(h){h.tabIndex=-1;try{h.focus()}catch(e){}}}
+function importOfferCard(){var up=importOffer.update,replaces=cfg.setupDone&&!cfg.example,c=el("div","banner col");c.id="importOffer";c.setAttribute("role","group");c.setAttribute("aria-label",up?"Update from a Dovetail file":"Open a Dovetail backup");
+  if(up){var saved=whenSaved(importOffer.data.savedAt);c.appendChild(el("b",null,"Update from this file?"));
+    c.appendChild(el("div",null,(saved?"Saved "+saved+". ":"")+"This replaces the figures on this phone"+(NATIVE?"; what's here now is kept in the automatic backups for 30 days.":".")));
+    // An older file (scrolled back to in the chat, say) would undo ticks or pay made here since: said plainly.
+    if(importOffer.newerHere){var w=el("div",null,"This phone has changes made after this file was saved. They'll be replaced.");w.id="updateOlder";c.appendChild(w)}}
+  else{c.appendChild(el("b",null,"Open this Dovetail backup?"));if(importOffer.summary)c.appendChild(el("div",null,importOffer.summary));
+    if(replaces)c.appendChild(el("div",null,"This replaces all people, accounts, bills and saved months on this phone."+(NATIVE?" What's on this phone now is kept in the automatic backups for 30 days.":"")))}
+  var r=el("div","btnrow"),y=el("button","btn"+(replaces&&(!up||importOffer.newerHere)?" danger":""),up?"Update":replaces?"Replace with this backup":"Restore this backup");y.id="importYes";
+  y.addEventListener("click",function(){var d=importOffer.data;savePending();
+    if(!keepCurrent()){toast("Couldn't save a backup, so nothing was changed.");return}restoreOffer=null;var res=applyBackup(d,true);
+    if(res!==true){importOffer.msg=restoreError(res);rerender();return}importOffer=null;afterRestore(up?"Updated":null);goTab("pay");queueNativeBackup();if(up)focusPayH()});
+  var n=el("button","btn ghost","Cancel");n.id="importNo";n.addEventListener("click",function(){importOffer=null;rerender();toast("Nothing was changed");if(up)focusPayH()});
   r.appendChild(y);r.appendChild(n);c.appendChild(r);if(importOffer.msg){var em=el("div","hint err",importOffer.msg);em.setAttribute("role","alert");c.appendChild(em)}return c}
 /* Browsers (and testing): the same import through a file input. In the app the system file picker is used. */
 function pickFileInBrowser(){var i=el("input");i.type="file";i.accept=".json,application/json,text/plain";i.style.display="none";document.body.appendChild(i);
   i.addEventListener("change",function(){var f=i.files&&i.files[0];i.remove();if(!f)return;if(f.size>MAX_IMPORT){importFailed("toobig");return}
     var rd=new FileReader();rd.onload=function(){offerImport(String(rd.result||"").replace(/^\uFEFF/,""))};rd.onerror=function(){importFailed("unreadable")};rd.readAsText(f)});
   i.click()}
-function importFile(){if(NATIVE&&typeof NATIVE.pickBackupFile==="function")nativeCall(function(){NATIVE.pickBackupFile()});else pickFileInBrowser()}
+function importFile(){pickedFile=true;if(NATIVE&&typeof NATIVE.pickBackupFile==="function")nativeCall(function(){NATIVE.pickBackupFile()});else pickFileInBrowser()}
 function doRestore(){
   if(restoreText.length>MAX_IMPORT){restoreMsg=IMPORT_FAIL.toobig;restoreArm=false;rerender();return}
   var data;try{data=JSON.parse(restoreText)}catch(e){restoreMsg="That doesn't look like a backup. Paste the whole text you copied, including the curly brackets.";restoreArm=false;rerender();return}
@@ -1726,67 +1742,24 @@ function loadExample(){
   try{history.replaceState(null,"","#pay")}catch(e){}monthKey=k0;route();goMonth(monthKey)}
 
 /* ---------- help: "What's this?" buttons, the help sheet and Settings › Help (2.6) ----------
-   A small round "?" next to a heading a newcomer may not know opens a bottom sheet with a plain explanation, using the
-   household's own figures where that helps. The sheet is a modal dialog: focus starts on its title and stays inside it,
+   A small round "?" next to a heading opens a bottom sheet with a plain explanation. Since 2.9.1 only "Saved so far"
+   has one: the tour, Settings › Help and the charts' own keys and figures explain the rest. The sheet is a modal dialog: focus starts on its title and stays inside it,
    Esc, Close, a tap outside it and the phone's Back button close it, and focus goes back to the "?" that opened it. */
 var lastR=null;  // the calculation for the month on screen, as the Pay tab last drew it
 function fig(t){return el("p","fig",t)}
-function heroWhere(r){return r.floats.length===1?" in "+accName(r.floats[0].id):" across "+plural(r.floats.length,"account")}
 var HELP={
-  left:{ask:"What does left over mean?",title:"Left over",body:function(){var r=lastR,out=["Left over is the money that's yours to spend this month, once everything else is covered.",
-      "It's worked out as the pay coming in, minus bills, spending budgets and savings transfers."];
-    if(r){if(r.totalIn<=0.004)out.push(fig("Add your pay to see what's left over in "+mLabel(monthKey)+"."));
-      else if(r2(r.flt)<0)out.push(fig(mLabel(monthKey)+" is "+fmt(-r.flt)+" short: more is going out than coming in."),"To fix it, trim a spending budget or a bill, or move a one-off to another month.");
-      else out.push(fig(mLabel(monthKey)+": "+fmt(r.flt)+" left over"+heroWhere(r)+"."))}
-    out.push("It stays in the account that keeps what's left. You don't need to move it.");return out}},
-  pay:{ask:"What does take-home pay mean?",title:"Take-home pay",body:function(){var out=["Take-home pay is the money that actually reaches your bank account, after tax, National Insurance and pension.",
-      "It's the ‘net pay’ on a payslip, or check your bank statement.","Type it here each payday. Until you do, Dovetail uses your last typed pay, or your usual pay, so the transfers are estimates."];
-    var p=readPay(),names=estimatedPeople(p).map(function(x){return x.name||"someone"});
-    if(cfg.people.length)out.push(fig(names.length?"For "+mLabel(monthKey)+", Dovetail is estimating the pay for "+listAnd(names)+".":"All the pay for "+mLabel(monthKey)+" is typed in."));
-    out.push("Each person's usual pay is in Settings › People.");return out}},
-  transfers:{ask:"What do the transfers mean?",title:"Transfers to make",body:function(){var r=lastR,out=["Each transfer moves money between two of your accounts, or into savings.",
-      "Together they make sure every account can pay its own bills.","Make them in this order: money has to arrive in an account before it can move on.",
-      "Make each one in your banking app, then tick it here. A ticked transfer is done for this month.","If an amount changes after you've ticked it, Dovetail shows the difference to send.",
-      r&&r.steps.length?(cfg.people.length>1?"Share sends the list as text, so "+(cfg.people.length===2?"the other person":"everyone else")+" can make their transfers from it.":"Share sends the list as text, to keep or to send on."):null].filter(Boolean);
-    if(r){var d=(cur&&cur.done)||{},n=r.steps.filter(function(s){return d[s.id]!=null&&d[s.id]!==false}).length;
-      out.push(fig(r.steps.length?mLabel(monthKey)+": "+plural(r.steps.length,"transfer")+", "+n+" done.":"No transfers are needed in "+mLabel(monthKey)+"."))}
-    return out}},
-  oneoffs:{ask:"What are one-offs?",title:"One-offs",body:function(){var l=curOneOffs(),out=["A one-off is money that goes out or comes in just once.",
-      "Money out: a car repair or a birthday present. Money in: a refund or a gift.","A one-off only changes its own month: that month's transfers and what's left over.",
-      "Give it a date and it shows on Reminders too."];
-    if(l.length){var net=0;l.forEach(function(o){net+=(o.kind==="in"?1:-1)*num(o.amount)});out.push(fig(mLabel(monthKey)+": "+plural(l.length,"one-off")+", "+(net>=0?"+ ":"− ")+fmt(Math.abs(net))+" in all."))}
-    return out}},
-  notevery:{ask:"What does not every month mean?",title:"Not every month",body:function(){var r=notEveryMonth(cfg,monthKey,0),out=["Some bills aren't paid every month, like a yearly insurance, or Council Tax paid over ten months.",
-      "Each one only counts in the months it's paid, so those months need more money.","This card lists the ones due this month, so they don't catch you out."];
-    if(r.due.length)out.push(fig(mLabel(monthKey)+": "+plural(r.due.length,"bill")+" like this, "+fmt(r.dueTotal)+"."));
-    out.push("To change when a bill is paid, open it in Settings › Bills.");return out}},
-  months:{ask:"What does month by month show?",title:"Month by month",body:function(){return ["Each bar is what's left over in one pay month: three before this one, this one and eight ahead.",
-      "Solid bars are months with pay typed in. Striped bars are estimates, using your last typed pay, or your usual pay.","The short dark line on a solid bar is what Dovetail expected before the pay was typed.",
-      "A red bar is a short month: more goes out than comes in.","Tap a bar, or use the arrow keys, to read a month. “Show as table” lists every figure."]}},
-  picture:{ask:"What does the monthly picture show?",title:"The monthly picture",body:function(){var r=monthlyPicture(cfg,months,monthKey),out=["This is an average month: the money coming in, and where it goes.",
-      "Bills paid only in some months are spread across the year.","Saved from pay is the share of your money that goes to savings: savings transfers and bills marked as savings."];
-    out.push(fig(r.income>0.004?"Of every £100 that comes in, £"+Math.round(Math.max(0,r.savingsRate||0)*100)+" goes to savings.":"Add your pay to see how much of it goes to savings."));return out}},
-  categories:{ask:"What does where the money goes show?",title:"Where the money goes",body:function(){return ["Your bills, grouped by type, such as housing or insurance, with what they cost over a year.",
-      "Tap a group to see its bills.","Dovetail suggests a type from each bill's name. You can change it in Settings › Bills."]}},
   saved:{ask:"What does saved so far show?",title:"Saved so far",body:function(){return ["What you've put into savings: the savings transfers you ticked, and bills marked as savings.",
-      "Only months where you typed pay or ticked a transfer are counted.","Tax years run from 6 April to 5 April."]}},
-  prices:{ask:"What does price changes show?",title:"Price changes",body:function(){return ["When you mark a bill as renewed, Dovetail keeps its old price as well as the new one.",
-      "This shows how your prices changed at renewal.","Prices often rise at renewal, so it's worth shopping around before then."]}},
-  reminders:{ask:"How do reminders work?",title:"Reminders",body:function(){return ["Needs attention lists anything overdue or due soon, counted from today.",
-      "The month's list shows what falls between this month's payday and the next.","When you've renewed something, tap Mark as renewed. Dovetail saves the new date and price, and reminds you next time.",
-      "Renewal dates for bills are set on each bill in Settings › Bills."]}}};
+      "Only months where you typed pay or ticked a transfer are counted.","Tax years run from 6 April to 5 April."]}}};
 function helpBtn(key){var h=HELP[key],b=el("button","helpq");b.type="button";b.setAttribute("aria-label",h.ask);b.setAttribute("aria-haspopup","dialog");b.setAttribute("data-help",key);
   var q=el("span",null,"?");q.setAttribute("aria-hidden","true");b.appendChild(q);b.addEventListener("click",function(){openHelp(key,b)});return b}
-/* A heading with its "?" beside it (the heading's own text is unchanged). */
-function withHelp(h,key){if(!h)return null;var w=el("span","hh");h.parentNode.insertBefore(w,h);w.appendChild(h);w.appendChild(helpBtn(key));return w}
 function openHelp(key,from){var h=HELP[key];openSheet(h.title,h.body(),from,{key:key,describe:true})}
-var sheetOpen=false,sheetFrom=null,sheetSkip=false,sheetHist=false;
+var sheetOpen=false,sheetFrom=null,sheetSkip=false,sheetHist=false,sheetRefocus=null;
 /* Everything behind a sheet or the tour: unreachable by touch, keyboard and screen reader while it's open. */
 function setInert(on){["main","tabbar"].forEach(function(id){var n=$(id);if(on)n.setAttribute("inert","");else n.removeAttribute("inert")})}
 function openSheet(title,nodes,from,o){o=o||{};var sh=$("sheet"),b=clear($("sheetB"));$("sheetH").textContent=title;
   nodes.forEach(function(n){b.appendChild(typeof n==="string"?el("p",null,n):n)});
   if(o.describe)sh.setAttribute("aria-describedby","sheetB");else sh.removeAttribute("aria-describedby");
-  sheetFrom={el:from||null,key:o.key||null,id:(from&&from.id)||null};
+  sheetFrom={el:from||null,key:o.key||null,id:(from&&from.id)||null};$("sheetClose").className="btn"+(o.quietClose?" ghost":"");
   if(!sheetOpen){sheetOpen=true;hideUndo();setInert(true);$("sheetWrap").hidden=false;
     // An entry in the history, so the phone's Back button closes the sheet rather than leaving the screen.
     try{history.pushState(Object.assign({},history.state||{},{sheet:true}),"");sheetHist=true}catch(e){sheetHist=false}}
@@ -1794,7 +1767,8 @@ function openSheet(title,nodes,from,o){o=o||{};var sh=$("sheet"),b=clear($("shee
 function closeSheet(fromBack){if(!sheetOpen)return;sheetOpen=false;$("sheetWrap").hidden=true;setInert(false);
   if(sheetHist&&!fromBack){sheetSkip=true;setTimeout(function(){sheetSkip=false},1000);try{history.back()}catch(e){sheetSkip=false}}sheetHist=false;
   var f=sheetFrom||{},shown=function(n){return n&&n.isConnected&&n.getClientRects().length?n:null};sheetFrom=null;
-  var t=shown(f.el)||(f.key&&shown(document.querySelector('[data-help="'+f.key+'"]')))||(f.id&&shown($(f.id)));if(t)try{t.focus({preventScroll:true})}catch(e){}}
+  var t=shown(f.el)||(f.key&&shown(document.querySelector('[data-help="'+f.key+'"]')))||(f.id&&shown($(f.id)));if(t)try{t.focus({preventScroll:true})}catch(e){}
+  sheetRefocus=sheetSkip?t:null}
 $("sheetClose").addEventListener("click",function(){closeSheet()});$("sheetBack").addEventListener("click",function(){closeSheet()});
 /* Tab and Shift+Tab go round the buttons inside an open sheet or tour card, never out of it. */
 function trapTab(e,box){var f=[].filter.call(box.querySelectorAll("button,[href],input,select,textarea,[tabindex]:not([tabindex='-1'])"),function(x){return !x.disabled&&x.getClientRects().length});if(!f.length)return;
@@ -1843,12 +1817,12 @@ function openWords(from){var dl=el("dl","gloss");WORDS.forEach(function(w){var d
    the history while it runs, wherever it is, so the phone's Back button ends it, even on the Pay tab (where Back would
    otherwise leave the app). */
 var TOUR=[
-  {id:"month",target:"#monthBar",tab:"pay",title:"Your pay month",text:"This is the month your pay is for, from one payday to the next. Swipe, or use the arrows, to look at other months."},
+  {id:"month",target:"#monthBar",tab:"pay",title:"Your pay month",text:"This is the month your pay is for, from one payday to the next. Swipe, use the arrows or tap the month to look at other months."},
   {id:"hero",target:"#hero",tab:"pay",title:"What's left over",text:function(r){
     if(r.totalIn<=0.004)return "After every bill, budget and savings transfer, this is what's left for the month. Add your pay to see it.";
     return r2(r.flt)<0?"This month is "+fmt(-r.flt)+" short: more is going out than coming in. You can fix it by changing a budget or a bill.":"After every bill, budget and savings transfer, this is what's left for the month: "+fmt(r.flt)+"."}},
   {id:"pay",target:"#payCard",tab:"pay",title:"Type your pay each payday",text:"When pay arrives, type what actually reached your bank. Until then, Dovetail uses your last typed pay, or your usual pay."},
-  {id:"transfers",target:"#trSec",tab:"pay",title:"Then make these transfers",text:function(r){return r.steps.length?"These are the payments to make in your banking app, in this order, so every bill is covered. Tick each one off when it's done."+(cfg.people.length>1?" Share sends the list to "+(cfg.people.length===2?"the other person.":"everyone else."):""):
+  {id:"transfers",target:"#trSec",tab:"pay",title:"Then make these transfers",text:function(r){return r.steps.length?"These are the payments to make in your banking app, in this order, so every bill is covered. Tick each one off when it's done."+(cfg.people.length>1?" Share sends the list to "+(cfg.people.length===2?"the other person":"everyone else")+(sendsUpdate()?", or a file that brings Dovetail on their phone up to date.":"."):""):
     "When money needs to move between your accounts, the transfers show here, in order. Tick each one off when it's done."}},
   {id:"oneoffs",target:"#oneOffCard",tab:"pay",open:openPayDetails,title:"Something different this month?",text:"A birthday, a car repair, a refund: add it here and the transfers change to cover it."},
   {id:"notevery",target:"#nmCard",tab:"pay",open:openPayDetails,when:function(){return notEveryMonth(cfg,monthKey,0).any},title:"Bills that aren't monthly",text:"Yearly or occasional bills show up in the month they're due, so they don't catch you out."},
@@ -1978,6 +1952,43 @@ document.addEventListener("keydown",function(e){if(e.key==="Escape"&&!e.defaultP
    field or anything marked data-noswipe. */
 function monthTab(){return tab==="pay"||tab==="analysis"||tab==="due"}
 function stepMonth(d){goMonth(shiftMonth(monthKey,d));animatePanel($("tab-"+tab),d)}
+/* ---------- choosing a month (2.10) ----------
+   The month name in the month bar opens a sheet with two wheels, month and year (pickerYears in calc.js), and "Show
+   <month>"; "This month" too when another month is on screen. Each wheel is a listbox that scrolls and snaps to the
+   option in the middle band: a tap picks an option, the arrow keys, Page Up/Down, Home and End move it, Enter shows. */
+function openMonthPicker(){if(tour||sheetOpen)return;
+  var sel={m:Number(monthKey.slice(5,7))-1,y:Number(monthKey.slice(0,4))},years=pickerYears(Object.keys(months),thisMonth(),monthKey);
+  var go=el("button","btn");go.type="button";go.id="pickGo";
+  var key=function(){return sel.y+"-"+pad(sel.m+1)},label=function(){go.textContent="Show "+mLabel(key())};
+  // A wheel still settling after a fling: what's in the band now counts.
+  var show=function(k){wm.sync();wy.sync();k=k||key();closeSheet();if(k===monthKey)return;var d=k<monthKey?-1:1;goMonth(k);animatePanel($("tab-"+tab),d)};
+  var wrap=el("div","wheels"),band=el("div","wheel-band");band.setAttribute("aria-hidden","true");wrap.appendChild(band);
+  var wm=wheel("pickMonth","Month",MN,sel.m,function(i){sel.m=i;label()},function(){show()}),
+    wy=wheel("pickYear","Year",years.map(String),years.indexOf(sel.y),function(i){sel.y=years[i];label()},function(){show()});
+  wrap.appendChild(wm.box);wrap.appendChild(wy.box);label();
+  go.addEventListener("click",function(){show()});
+  var r=el("div","btnrow");r.appendChild(go);var now=thisMonth();
+  if(now!==monthKey){var t=el("button","btn ghost","This month");t.type="button";t.id="pickNow";t.addEventListener("click",function(){show(now)});r.appendChild(t)}
+  openSheet("Choose a month",[wrap,r],$("monthPick"),{quietClose:true});wm.place();wy.place()}
+function wheel(id,name,items,ix,onPick,onEnter){
+  var box=el("div","wheel-col"),lab=el("div","small muted",name);lab.id=id+"L";box.appendChild(lab);
+  var w=el("div","wheel");w.id=id;w.tabIndex=0;w.setAttribute("role","listbox");w.setAttribute("aria-labelledby",id+"L");box.appendChild(w);
+  // A scroll picks only when it's the user's (a finger, mouse or wheel) or one of the wheel's own (target): a screen
+  // reader moving through the options scrolls the wheel too, and mustn't change the choice by itself.
+  var cur=-1,t=null,target=null,user=false,h=function(){return opts[0].getBoundingClientRect().height||44};
+  ["pointerdown","touchstart","wheel"].forEach(function(ev){w.addEventListener(ev,function(){user=true},{passive:true})});
+  var opts=items.map(function(txt,i){var o=el("div","wheel-o",txt);o.id=id+"_"+i;o.setAttribute("role","option");o.setAttribute("aria-selected","false");
+    o.addEventListener("click",function(){pick(i,true)});w.appendChild(o);return o});
+  function pick(i,scroll){i=Math.max(0,Math.min(items.length-1,i));
+    if(i!==cur){if(cur>=0)opts[cur].setAttribute("aria-selected","false");cur=i;opts[i].setAttribute("aria-selected","true");w.setAttribute("aria-activedescendant",opts[i].id);onPick(i)}
+    if(scroll){target=i;try{w.scrollTo({top:i*h(),behavior:reduceMotion?"auto":"smooth"})}catch(e){w.scrollTop=i*h()}}}
+  // A scroll by finger picks whatever settles in the middle.
+  w.addEventListener("scroll",function(){clearTimeout(t);t=setTimeout(function(){if(user||target!=null)pick(Math.round(w.scrollTop/h()),false);user=false;target=null},90)},{passive:true});
+  w.addEventListener("keydown",function(e){var k=e.key,d=k==="ArrowDown"?1:k==="ArrowUp"?-1:k==="PageDown"?3:k==="PageUp"?-3:0;
+    if(d)pick(cur+d,true);else if(k==="Home")pick(0,true);else if(k==="End")pick(items.length-1,true);else if(k==="Enter"||k===" ")onEnter();else return;e.preventDefault()});
+  return {box:box,place:function(){pick(Math.max(0,ix),false);w.scrollTop=Math.max(0,ix)*h()},
+    sync:function(){if(user&&target==null)pick(Math.round(w.scrollTop/h()),false)}}}
+$("monthPick").addEventListener("click",openMonthPicker);
 (function(){var m=$("main"),g=null;
   m.addEventListener("touchstart",function(e){g=null;if(e.touches.length!==1||!cfg||!cfg.setupDone||!monthTab()||tour||sheetOpen)return;var t=e.touches[0],w=window.innerWidth;
     if(t.clientX<=24||t.clientX>=w-24)return;
@@ -1992,10 +2003,11 @@ function stepMonth(d){goMonth(shiftMonth(monthKey,d));animatePanel($("tab-"+tab)
    goes back a tab. Going back fires popstate and then hashchange; the second one changes nothing (the tab is already
    right), so it doesn't redraw the page again (which would move the scroll and focus, for example where the tour has
    just put them). */
-window.addEventListener("popstate",function(){if(sheetSkip){sheetSkip=false;return}if(tourPop){tourPop=false;return}if(setupPop){setupPop=false;return}if(sheetOpen){closeSheet(true);return}
+window.addEventListener("popstate",function(){if(sheetSkip){sheetSkip=false;
+    // Going back after Esc closes a sheet, Chromium can drop focus (seen on Analysis): put it back on the "?".
+    var r=sheetRefocus;sheetRefocus=null;if(r)setTimeout(function(){var a=document.activeElement;if(r.isConnected&&(!a||a===document.body))try{r.focus({preventScroll:true})}catch(e){}},0);return}if(tourPop){tourPop=false;return}if(setupPop){setupPop=false;return}if(sheetOpen){closeSheet(true);return}
   var ended=!!tour&&!tabWait;if(ended)endTour(false,true);route();if(ended)tourFocus(null)});
 window.addEventListener("hashchange",function(){if(cfg&&hashTab()===tab)return;route()});
-[["payH","pay"],["trH","transfers"],["ooH","oneoffs"],["dueH","notevery"],["remH","reminders"]].forEach(function(x){withHelp($(x[0]),x[1])});
 $("prev").addEventListener("click",function(){stepMonth(-1)});
 $("next").addEventListener("click",function(){stepMonth(1)});
 /* Any section that opens scrolls into view if it's off-screen. */

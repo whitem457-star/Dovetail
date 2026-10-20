@@ -1,6 +1,12 @@
 # Contributing to Dovetail
 
-Thanks for your interest. Dovetail is a small, offline Android app with a few firm rules. Please read this before opening an issue or a pull request.
+Thanks for your interest. Dovetail is a small, offline Android app with a few firm rules. Issues and ideas are welcome; pull requests aren't accepted for now (see below).
+
+## Issues, ideas and pull requests
+
+- **Issues and ideas are welcome.** Describe the problem or the idea, and how to see it. Good ones may be built into a later version.
+- **Pull requests aren't accepted for now,** so that Dovetail's author can keep choosing how future versions are licensed. Please open an issue instead.
+- You're welcome to build Dovetail yourself, or fork it, under its licence.
 
 ## The rules
 
@@ -29,4 +35,4 @@ Official releases are signed with a key that isn't in this repository. Your own 
 
 ## Licence
 
-By contributing, you agree that your contribution is licensed under the GNU General Public License, version 3 or later, like the rest of Dovetail.
+Dovetail is licensed under the GNU General Public License, version 3 or later (`LICENSE`).

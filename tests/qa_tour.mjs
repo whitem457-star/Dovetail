@@ -188,54 +188,41 @@ for (const rm of ['reduce', 'no-preference']) {
 }
 
 // ---------- 6. "What's this?" buttons and the help sheet ----------
+// 2.9.1: one "?" is left, on Saved so far (Analysis); the tour, Settings › Help and the charts' own keys explain the rest.
+// Everything about the sheet is checked through it: a dialog, focus, Tab kept inside, and Esc, Close, a tap outside and
+// Back each closing it with focus back on the "?".
 ({ ctx, p } = await session({ storage: sampleStorage(true), w: 360, h: 780 }));
-await openDetails(p); // 2.7: Not every month and the one-offs are under "This month in detail"
-const HELPS = { left: 'Left over', pay: 'Take-home pay', transfers: 'Transfers to make', oneoffs: 'One-offs', notevery: 'Not every month' };
-check('A "?" by each heading a newcomer may not know on the Pay tab', JSON.stringify(await p.$$eval('#tab-pay .helpq', b => b.map(x => x.getAttribute('data-help')))) === JSON.stringify(['left', 'pay', 'transfers', 'notevery', 'oneoffs']));
-check('…each named as a question, with a 44px tap area', JSON.stringify(await p.$$eval('#tab-pay .helpq', b => b.map(x => x.getAttribute('aria-label')))) ===
-  JSON.stringify(['What does left over mean?', 'What does take-home pay mean?', 'What do the transfers mean?', 'What does not every month mean?', 'What are one-offs?']) &&
-  (await p.$$eval('#tab-pay .helpq', b => b.every(x => { const r = x.getBoundingClientRect(); return r.width >= 44 && r.height >= 44; }))));
-check('…and the headings\' own text is unchanged', (await T(p, '#heroH')) === 'Left over this month' && (await T(p, '#payH')) === 'Take-home pay' && (await T(p, '#trH')) === 'Transfers to make, in this order');
-for (const [key, title] of Object.entries(HELPS)) {
-  const b = `#tab-pay .helpq[data-help=${key}]`;
-  await p.$eval(b, e => e.scrollIntoView({ block: 'center' })); await p.click(b); await p.waitForTimeout(150);
-  check(`"${title}": opens a sheet with its explanation, focus on its title`, await p.isVisible('#sheet') && (await T(p, '#sheetH')) === title && (await focusId(p)) === 'sheetH' &&
-    (await p.getAttribute('#sheet', 'role')) === 'dialog' && (await p.getAttribute('#sheet', 'aria-modal')) === 'true' && (await p.getAttribute('#sheet', 'aria-describedby')) === 'sheetB');
-  if (key === 'left') {
-    check('Left over: how it\'s worked out, with this month\'s real figure', (await T(p, '#sheetB')).includes("It's worked out as the pay coming in, minus bills, spending budgets and savings transfers.") &&
-      (await T(p, '#sheetB .fig')) === 'November 2026: £267.02 left over in Joint spending account.', await T(p, '#sheetB'));
+await openDetails(p);
+check('2.9.1: no "?" on the Pay tab or Reminders', (await p.$$('#tab-pay .helpq, #tab-due .helpq')).length === 0);
+check('…and the Pay tab\'s headings are as before', (await T(p, '#heroH')) === 'Left over this month' && (await T(p, '#payH')) === 'Take-home pay' && (await T(p, '#trH')) === 'Transfers to make, in this order');
+await p.click('#t-analysis'); await p.waitForTimeout(200);
+check('Analysis: the only "?" is on Saved so far', JSON.stringify(await p.$$eval('.helpq', b => b.map(x => x.getAttribute('data-help')))) === JSON.stringify(['saved']), JSON.stringify(await p.$$eval('.helpq', b => b.map(x => x.getAttribute('data-help')))));
+check('…named as a question, with a 44px tap area', (await p.getAttribute('.helpq', 'aria-label')) === 'What does saved so far show?' && await p.$eval('.helpq', x => { const r = x.getBoundingClientRect(); return r.width >= 44 && r.height >= 44; }));
+const SQ = '#analysis .helpq[data-help=saved]';
+const openSaved = async () => { await p.$eval(SQ, e => e.scrollIntoView({ block: 'center' })); await p.click(SQ); await p.waitForTimeout(150); };
+for (const how of ['Esc', 'Close', 'a tap outside', 'Back']) {
+  await openSaved();
+  check(`Saved so far: opens a sheet with its explanation, focus on its title (then closed with ${how})`, await p.isVisible('#sheet') && (await T(p, '#sheetH')) === 'Saved so far' && (await focusId(p)) === 'sheetH' &&
+    (await p.getAttribute('#sheet', 'role')) === 'dialog' && (await p.getAttribute('#sheet', 'aria-modal')) === 'true' && (await p.getAttribute('#sheet', 'aria-describedby')) === 'sheetB' &&
+    (await T(p, '#sheetB')).includes('Only months where you typed pay or ticked a transfer are counted.') && (await T(p, '#sheetB')).includes('Tax years run from 6 April to 5 April.'));
+  if (how === 'Esc') {
     const ax = await axe(p); check('Accessibility of an open help sheet', ax.length === 0, ax.join(' | '));
     const s2 = new Set(); for (let i = 0; i < 4; i++) { await p.keyboard.press('Tab'); s2.add(await focusIn(p, '#sheet') ? await focusId(p) : 'OUTSIDE'); }
     check('Tab stays inside the sheet', [...s2].join() === 'sheetClose', [...s2].join());
     await p.keyboard.press('Escape'); await p.waitForTimeout(120);
-  } else if (key === 'pay') {
-    check('Take-home pay: what to type, where to find it, and what happens if you don\'t', (await T(p, '#sheetB')).includes('net pay') && (await T(p, '#sheetB')).includes('Until you do, Dovetail uses your last typed pay, or your usual pay, so the transfers are estimates.'), await T(p, '#sheetB'));
+  } else if (how === 'Close') {
     await p.click('#sheetClose'); await p.waitForTimeout(120);
-  } else if (key === 'transfers') {
-    check('Transfers: why the order, and what a tick means, with this month\'s count', (await T(p, '#sheetB')).includes('Make them in this order') && (await T(p, '#sheetB')).includes('A ticked transfer is done for this month') && /November 2026: \d+ transfers, \d+ done\./.test(await T(p, '#sheetB .fig')), await T(p, '#sheetB'));
+  } else if (how === 'a tap outside') {
     await p.click('#sheetBack', { position: { x: 20, y: 20 } }); await p.waitForTimeout(120);
   } else {
     const y0 = await p.$eval('#main', m => m.scrollTop);
     await p.goBack(); await p.waitForTimeout(200);
-    check(`"${title}": the phone's Back button closes the sheet and stays put`, await p.isHidden('#sheetWrap') && await p.isVisible('#tab-pay') && Math.abs((await p.$eval('#main', m => m.scrollTop)) - y0) < 2);
+    check('The phone\'s Back button closes the sheet and stays put', await p.isHidden('#sheetWrap') && await p.isVisible('#tab-analysis') && Math.abs((await p.$eval('#main', m => m.scrollTop)) - y0) < 2);
   }
-  check(`"${title}": closed (${key === 'left' ? 'Esc' : key === 'pay' ? 'Close' : key === 'transfers' ? 'a tap outside' : 'Back'}), focus back on its "?"`, await p.isHidden('#sheetWrap') && (await p.evaluate(() => document.activeElement.getAttribute('data-help'))) === key && (await p.getAttribute('#main', 'inert')) === null);
+  check(`Closed (${how}), focus back on its "?", nothing left inert`, await p.isHidden('#sheetWrap') && (await p.evaluate(() => document.activeElement.getAttribute('data-help'))) === 'saved' &&
+    (await p.getAttribute('#main', 'inert')) === null && (await p.getAttribute('#tabbar', 'inert')) === null);
 }
-check('Closing with Close went back in history too: Back now leaves Pay as before (no stray entries)', (await p.evaluate(() => history.state)) === null);
-await p.click('#t-analysis'); await p.waitForTimeout(200);
-check('Analysis: a "?" on Month by month, the monthly picture, where the money goes, saved so far and price changes', JSON.stringify(await p.$$eval('#analysis .helpq', b => b.map(x => x.getAttribute('data-help')))) === JSON.stringify(['months', 'picture', 'categories', 'saved', 'prices']) ||
-  JSON.stringify(await p.$$eval('#analysis .helpq', b => b.map(x => x.getAttribute('data-help')))) === JSON.stringify(['months', 'picture', 'categories', 'saved']), JSON.stringify(await p.$$eval('#analysis .helpq', b => b.map(x => x.getAttribute('data-help')))));
-await p.click('#analysis .helpq[data-help=picture]'); await p.waitForTimeout(150);
-check('The monthly picture: what "Saved from pay" means, as "of every £100"', (await T(p, '#sheetH')) === 'The monthly picture' && /Of every £100 that comes in, £\d+ goes to savings\./.test(await T(p, '#sheetB .fig')), await T(p, '#sheetB'));
-await p.keyboard.press('Escape'); await p.waitForTimeout(100);
-await p.click('#analysis .helpq[data-help=months]'); await p.waitForTimeout(150);
-check('Month by month: solid and striped bars, the predicted line, short months', (await T(p, '#sheetB')).includes('Striped bars are estimates, using your last typed pay, or your usual pay.') && (await T(p, '#sheetB')).includes('what Dovetail expected before the pay was typed') && (await T(p, '#sheetB')).includes('A red bar is a short month'));
-await p.keyboard.press('Escape'); await p.waitForTimeout(100);
-check('…and focus back on that "?" (on the Analysis tab)', (await p.evaluate(() => document.activeElement.getAttribute('data-help'))) === 'months' && await p.isVisible('#tab-analysis'));
-await p.click('#t-due'); await p.waitForTimeout(150);
-await p.click('#tab-due .helpq[data-help=reminders]'); await p.waitForTimeout(150);
-check('Reminders: "Needs attention" and the month\'s list, and what Mark as renewed does', (await T(p, '#sheetH')) === 'Reminders' && (await T(p, '#sheetB')).includes('Needs attention lists anything overdue or due soon') && (await T(p, '#sheetB')).includes('Mark as renewed'));
-await p.keyboard.press('Escape'); await p.waitForTimeout(100);
+check('Closing went back in history too: no sheet entry left behind', (await p.evaluate(() => JSON.stringify(history.state))) === '{"sub":true}', await p.evaluate(() => JSON.stringify(history.state)));
 // Settings › Help: how Dovetail works, and the words it uses
 await p.click('#t-settings'); await p.click('#sHelp summary'); await p.click('#helpHow'); await p.waitForTimeout(150);
 check('"How Dovetail works": the routine, the flow of money with the household\'s own diagram, left over and pay months', (await T(p, '#sheetH')) === 'How Dovetail works' &&
@@ -255,7 +242,7 @@ await ctx.close();
 for (const dark of [false, true]) {
   ({ ctx, p } = await session({ storage: sampleStorage(true), w: 360, h: 740, dark }));
   await p.evaluate(() => document.documentElement.setAttribute('data-text', 'large'));
-  for (const open of [async () => { await p.click('#hero .helpq'); }, async () => { await p.click('#t-settings'); await p.click('#sHelp summary'); await p.click('#helpHow'); }, async () => { await p.click('#helpWords'); }]) {
+  for (const open of [async () => { await p.click('#t-analysis'); await p.waitForTimeout(150); await p.click('#analysis .helpq[data-help=saved]'); }, async () => { await p.click('#t-settings'); await p.click('#sHelp summary'); await p.click('#helpHow'); }, async () => { await p.click('#helpWords'); }]) {
     await open(); await p.waitForTimeout(150);
     const v = await axe(p), fits = await p.$eval('#sheet', e => e.scrollWidth <= e.clientWidth + 1 && e.getBoundingClientRect().right <= window.innerWidth + 1);
     check(`Larger text, 360px${dark ? ', dark' : ''}: "${await T(p, '#sheetH')}" fits without sideways scrolling and passes axe`, fits && v.length === 0, v.join(' | '));
@@ -265,12 +252,12 @@ for (const dark of [false, true]) {
 }
 // sentences in the help sheets: short ones
 ({ ctx, p } = await session({ storage: sampleStorage(true) }));
-await openDetails(p);
+await p.click('#t-analysis'); await p.waitForTimeout(150);
 const long = [];
-for (const key of ['left', 'pay', 'transfers', 'oneoffs', 'notevery']) { await p.click(`#tab-pay .helpq[data-help=${key}]`); await p.waitForTimeout(80);
+for (const key of ['saved']) { await p.click(`#analysis .helpq[data-help=${key}]`); await p.waitForTimeout(80);
   (await p.$$eval('#sheetB p', ps => ps.map(x => x.textContent))).forEach(t => t.split(/(?<=[.:?])\s+/).forEach(s => { if (s.split(/\s+/).length > 21) long.push(s); }));
   await p.keyboard.press('Escape'); await p.waitForTimeout(60); }
-check('Help on the Pay tab: no sentence over about 20 words', long.length === 0, long.join(' | '));
+check('Help sheet: no sentence over about 20 words', long.length === 0, long.join(' | '));
 await ctx.close();
 
 // ---------- 7. The first-month hint ----------

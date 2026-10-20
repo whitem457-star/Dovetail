@@ -24,7 +24,7 @@ check('Accessible', (await axe(p)).length === 0, (await axe(p)).join(' | '));
 check('The recovery screen offers Send feedback and names the address', await p.isVisible('#recoverFeedback') && (await T(p, '#recovery')).includes('write to dovetail.feedback@gmail.com'));
 await p.click('#recoverFeedback'); await p.waitForTimeout(150);
 const rfb = await p.evaluate(() => window.__qaNative.lastFeedback || {});
-check('…which sends the app details, saying the household couldn\'t be opened', /^Dovetail \d+\.\d+ feedback$/.test(rfb.subject || '') && (rfb.body || '').includes("Household: couldn't be opened (recovery screen)"), JSON.stringify(rfb));
+check('…which sends the app details, saying the household couldn\'t be opened', /^Dovetail \d+(\.\d+)+ feedback$/.test(rfb.subject || '') && (rfb.body || '').includes("Household: couldn't be opened (recovery screen)"), JSON.stringify(rfb));
 for (const dark of [false, true]) {
   const r2 = await session({ native: true, dark, w: 360, storage: { [K.cfg]: '{"schema":5,"setupDone":true,"people":[' } });
   await r2.p.evaluate(() => document.documentElement.setAttribute('data-text', 'large')); await r2.p.waitForTimeout(100);
