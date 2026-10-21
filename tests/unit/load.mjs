@@ -29,3 +29,25 @@ export function household(o) {
   return P.normCfg(Object.assign({ schema: 5, setupDone: true, people: [], accounts: [], bills: [], income: [], budgets: [], savings: [], reminders: [], doneLog: [], payday: {} }, o));
 }
 export const money = x => Math.round(x * 100) / 100;
+/** 2.13: the made-up household with 36 saved months (January 2024 to December 2026): typed pay that varies, ticks,
+ *  one-offs, top-ups of Current account 1 every fifth month (always from money that's there) and months made short by
+ *  one-offs (November 2024, June 2025). Pooled, with one account keeping what's left: Analysis and the exports must give
+ *  exactly what 2.12.1 gave. forced: also June 2026 with £500 pay each, where Joint bills needs a top-up the spending
+ *  account hasn't the money for (2.13 sends what there is and names the shortfall; 2.12.1 sent it all). */
+export function sample36({ forced = false } = {}) {
+  const { c, m } = sampleUpgraded(true);
+  for (let i = 0; i < 36; i++) {
+    const k = P.shiftMonth('2024-01', i); if (m[k]) continue;
+    const d = { pay: { alex: 2200 + (i * 37) % 300, sam: 2050 + (i * 53) % 250 }, done: {} };
+    if (i % 5 === 0) { d.pay.alex = 300; d.pay.sam += 1900; }
+    if (i % 4 === 1) d.done['s:sisa01'] = 200;
+    if (i % 7 === 3) d.oneOffs = [{ id: 'o' + i, kind: 'out', name: 'Car repair', amount: 400, account: 'jspend' }];
+    if (i % 9 === 2) d.oneOffs = [{ id: 'i' + i, kind: 'in', name: 'Refund', amount: 60, account: 'jbills' }];
+    if (i === 17) d.oneOffs = [{ id: 'big', kind: 'out', name: 'New boiler', amount: 3000, account: 'jspend' }];
+    if (forced && i === 29) d.pay = { alex: 500, sam: 500 };
+    if (i === 31) d.payEstimated = { sam: true };
+    if (i === 33) delete d.pay.sam;
+    m[k] = d;
+  }
+  return { c, m };
+}

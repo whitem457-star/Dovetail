@@ -6,6 +6,7 @@ import java.io.File
 import java.time.Clock
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 
 /**
@@ -13,9 +14,11 @@ import java.time.format.DateTimeFormatter
  *
  * Each backup is the same JSON the app's "Copy backup" produces. A new file is written only when the
  * content has changed. Kept: the [KEEP_LATEST] newest files, plus the newest file from each of the last
- * [KEEP_DAYS] days, so a bad edit session can't push every older day out. A backup saved just before a restore or an
- * opened backup file replaces everything is "kept" (name ends -keep) for [KEEP_PINNED_DAYS] days, however many
- * changes follow, so the replacement can always be undone.
+ * [KEEP_DAYS] days, so a bad edit session can't push every older day out, plus the newest file from each of the last
+ * [KEEP_MONTHS] calendar months, so something that went wrong quietly can still be undone weeks later. A backup saved
+ * just before a restore, an opened backup file, Start again or the first open of a new version is "kept" (name ends
+ * -keep) for [KEEP_PINNED_DAYS] days (the newest [KEEP_PINNED_MAX] of them), however many changes follow, so the
+ * replacement can always be undone.
  */
 class BackupStore(private val dir: File, private val clock: Clock = Clock.systemDefaultZone()) {
 
@@ -70,6 +73,10 @@ class BackupStore(private val dir: File, private val clock: Clock = Clock.system
         all.groupBy { it.savedAt.toLocalDate() }
             .filterKeys { !it.isBefore(firstDay) }
             .values.forEach { day -> keep += day.maxBy { it.name }.name }
+        val firstMonth = YearMonth.now(clock).minusMonths((KEEP_MONTHS - 1).toLong())
+        all.groupBy { YearMonth.from(it.savedAt) }
+            .filterKeys { !it.isBefore(firstMonth) }
+            .values.forEach { month -> keep += month.maxBy { it.name }.name }
         val keptFrom = LocalDate.now(clock).minusDays(KEEP_PINNED_DAYS.toLong())
         all.filter { it.kept && !it.savedAt.toLocalDate().isBefore(keptFrom) }.take(KEEP_PINNED_MAX).forEach { keep += it.name }
         all.filter { it.name !in keep }.forEach { File(dir, it.name).delete() }
@@ -87,8 +94,11 @@ class BackupStore(private val dir: File, private val clock: Clock = Clock.system
     companion object {
         const val KEEP_LATEST = 10
         const val KEEP_DAYS = 14
+        const val KEEP_MONTHS = 12
         const val KEEP_PINNED_DAYS = 30
-        const val KEEP_PINNED_MAX = 5
+        // 20 in 30 days: an update file or restore most weeks plus a new version or two leaves plenty of room, so the
+        // page's "kept for 30 days" holds (it was 5 before 2.13).
+        const val KEEP_PINNED_MAX = 20
         const val MAX_CHARS = 5 * 1024 * 1024
         private val NAME = Regex("""^backup-(\d{8})-(\d{6})(-keep)?\.json$""")
         private val STAMP: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")

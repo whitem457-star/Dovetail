@@ -72,7 +72,8 @@ await p.click('#t-settings'); await p.waitForTimeout(80);
 const idsBefore = (await bills(p)).map(b => b.id);
 await openBill(p, 'Spotify');
 await p.click('#billList .bill .ed .btn.danger'); await p.click('#billList .bill .ed .btn.danger'); await p.waitForTimeout(100);
-check('Deleting a bill offers Undo', await p.isVisible('#undoBar') && (await T(p, '#undoMsg')) === 'Spotify deleted' && !(await bills(p)).some(b => b.name === 'Spotify'));
+// 2.12: with saved months, a deleted item still counts in earlier months, and the message says so.
+check('Deleting a bill offers Undo', await p.isVisible('#undoBar') && (await T(p, '#undoMsg')) === 'Spotify deleted. Earlier months keep it' && !(await bills(p)).some(b => b.name === 'Spotify'));
 await p.click('#undoBtn'); await p.waitForTimeout(100);
 check('…and puts focus back on the restored bill', await p.evaluate(() => document.activeElement && document.activeElement.closest('.bill') && document.activeElement.textContent.includes('Spotify')));
 check('Undo puts it back in the same place with the same id', JSON.stringify((await bills(p)).map(b => b.id)) === JSON.stringify(idsBefore) && await p.isHidden('#undoBar') && (await T(p, '#toast')) === 'Restored');
@@ -83,14 +84,14 @@ check('Undo is offered for 6 seconds…', await p.isVisible('#undoBar'));
 await p.waitForTimeout(6300);
 check('…then goes away and the delete stands', await p.isHidden('#undoBar') && !(await bills(p)).some(b => b.name === 'Netflix'));
 await p.click('#sIncome summary'); await p.locator('#setIncome .box').first().locator('.btn.danger').click(); await p.locator('#setIncome .box').first().locator('.btn.danger').click(); await p.waitForTimeout(100);
-check('Removing income offers Undo', (await T(p, '#undoMsg')) === 'Child Benefit removed' && (await LS(p, K.cfg)).income.length === 1);
+check('Removing income offers Undo', (await T(p, '#undoMsg')) === 'Child Benefit removed. Earlier months keep it' && (await LS(p, K.cfg)).income.length === 1);
 await p.click('#undoBtn'); await p.waitForTimeout(100);
 check('…and Undo restores it first in the list', (await LS(p, K.cfg)).income[0].name === 'Child Benefit');
 await p.click('#sBudget summary'); await p.locator('#setBudget .box').nth(1).locator('.btn.danger').click(); await p.locator('#setBudget .box').nth(1).locator('.btn.danger').click(); await p.waitForTimeout(100);
 await p.click('#undoBtn'); await p.waitForTimeout(100);
 check('Removing and restoring a budget keeps the order', JSON.stringify((await LS(p, K.cfg)).budgets.map(b => b.id)) === '["food","fuel","general"]');
 await p.click('#sSavings summary'); await p.locator('#setSavings .box').first().locator('.btn.danger').click(); await p.locator('#setSavings .box').first().locator('.btn.danger').click(); await p.waitForTimeout(100);
-check('Removing a savings transfer offers Undo', (await T(p, '#undoMsg')) === 'Stocks and shares ISA removed');
+check('Removing a savings transfer offers Undo', (await T(p, '#undoMsg')) === 'Stocks and shares ISA removed. Earlier months keep it');
 await p.click('#undoBtn'); await p.waitForTimeout(100);
 check('…and its October tick still counts after Undo (same id)', (await LS(p, K.cfg)).savings[0].name === 'Stocks and shares ISA');
 // reminders
@@ -125,7 +126,7 @@ await p.click('#t-settings'); await p.waitForTimeout(50); await openBill(p, 'Wat
 await p.focus('#billList .bill .ed .btn.danger'); await p.keyboard.press('Enter'); await p.waitForTimeout(80);
 check('After the first tap on a delete button, focus stays on it ("Tap again to confirm")', await p.evaluate(() => document.activeElement && document.activeElement.textContent === 'Tap again to confirm'));
 await p.keyboard.press('Enter'); await p.waitForTimeout(100);
-check('A second press deletes and offers Undo', (await T(p, '#undoMsg')) === 'Water deleted');
+check('A second press deletes and offers Undo', (await T(p, '#undoMsg')) === 'Water deleted. Earlier months keep it');
 await p.focus('#undoBtn'); await p.waitForTimeout(6500);
 check('The undo bar waits while it has focus', await p.isVisible('#undoBar'));
 await p.keyboard.press('Enter'); await p.waitForTimeout(100);
@@ -149,6 +150,9 @@ await ctx.close();
 // ---------- Send feedback in the app (2.9) ----------
 ({ ctx, p } = await session({ native: true, storage: sampleStorage(true) }));
 await p.click('#t-settings'); await p.waitForTimeout(100);
+await p.click('#sBackup summary'); await p.waitForTimeout(100);
+check('2.13: Settings › Backup says Share on the Pay tab can send the file too', (await T(p, '#setBackup')).includes('Share on the Pay tab can send the file too (“Send an update for the other phone”)'), await T(p, '#setBackup'));
+await p.click('#sBackup summary'); await p.waitForTimeout(80);
 check('In the app, Send feedback is a button', (await p.$eval('#sendFeedback', e => e.tagName)) === 'BUTTON');
 await p.click('#sendFeedback'); await p.waitForTimeout(150);
 const fb = await p.evaluate(() => window.__qaNative.lastFeedback || {});
@@ -167,5 +171,43 @@ for (const [dark, w, native] of [[false, 360, true], [true, 360, true], [false, 
   await s2.ctx.close();
 }
 check('No JS errors (Send feedback)', p.errs.length === 0, p.errs.join(' | '));
+await ctx.close();
+
+// ---------- 2.13: keyboard focus survives opening, deleting and restoring an item in Settings ----------
+({ ctx, p } = await session({ storage: sampleStorage(false) }));
+const act = () => p.evaluate(() => { const a = document.activeElement; return a ? (a.id || (a.parentNode && a.parentNode.id ? a.parentNode.id + '>' + a.tagName : a.tagName)) : ''; });
+await p.click('#t-settings'); await p.click('#sBills summary'); await p.waitForTimeout(100);
+await p.focus('#bill_b5 > button'); await p.keyboard.press('Enter'); await p.waitForTimeout(100);
+check('2.13: Enter on a bill opens it with focus in its name box', (await act()) === 'bn_b5' && (await p.getAttribute('#bill_b5 > button', 'aria-expanded')) === 'true', await act());
+await p.keyboard.press('Tab');
+check('…and Tab goes on through its editor, not back to the top of the list', (await act()) === 'ba_b5', await act());
+await p.keyboard.press('Escape'); await p.waitForTimeout(100);
+check('…Escape closes it, back on the bill', (await act()) === 'bill_b5>BUTTON' && (await p.getAttribute('#bill_b5 > button', 'aria-expanded')) === 'false', await act());
+await p.click('#bill_b5 > button'); await p.waitForTimeout(100);
+check('…a tap opens it with focus on the bill, not the name box (no phone keyboard popping up)', (await act()) === 'bill_b5>BUTTON', await act());
+await p.focus('#bill_b5 .btn.danger'); await p.keyboard.press('Enter'); await p.waitForTimeout(80); await p.keyboard.press('Enter'); await p.waitForTimeout(150);
+check('…"Delete bill", confirmed: focus goes to the next bill', !(await bills(p)).some(b => b.id === 'b5') && (await act()) === 'bill_b6>BUTTON', await act());
+await p.focus('#undoBtn'); await p.keyboard.press('Enter'); await p.waitForTimeout(150);
+check('…Undo: focus goes to the restored bill', (await bills(p)).some(b => b.id === 'b5') && (await act()) === 'bill_b5>BUTTON', await act());
+// The last bill of an account: the one before it, and with none, "+ Add a bill".
+const lastFd = await p.$$eval('#billList .bill', l => l.map(x => x.id)), fdBills = (await bills(p)).filter(b => b.account === 'cur1').map(b => 'bill_' + b.id);
+const lastId = fdBills[fdBills.length - 1], before = lastFd[lastFd.indexOf(lastId) + 1];
+await p.click('#' + lastId + ' > button'); await p.waitForTimeout(80); await p.focus('#' + lastId + ' .btn.danger'); await p.keyboard.press('Enter'); await p.waitForTimeout(80); await p.keyboard.press('Enter'); await p.waitForTimeout(150);
+check('…deleting the last bill of an account goes on to the next bill in the list', (await act()) === before + '>BUTTON', [await act(), before]);
+await p.click('#sIncome summary'); await p.waitForTimeout(100);
+const inRows = await p.$$eval('#setIncome > .box', l => l.map(x => x.id));
+await p.focus('#' + inRows[0] + ' .btn.danger'); await p.keyboard.press('Enter'); await p.waitForTimeout(80); await p.keyboard.press('Enter'); await p.waitForTimeout(150);
+check('Income: "Remove", confirmed: focus goes to the next row\'s name', (await act()) === inRows[1].replace('in_', 'in_n_'), [await act(), inRows[1]]);
+await p.focus('#' + inRows[1] + ' .btn.danger'); await p.keyboard.press('Enter'); await p.waitForTimeout(80); await p.keyboard.press('Enter'); await p.waitForTimeout(150);
+check('…the last one: focus goes to "+ Add income"', (await act()) === 'in_add', await act());
+await p.click('#sBudget summary'); await p.waitForTimeout(100);
+const buRows = await p.$$eval('#setBudget > .box', l => l.map(x => x.id));
+await p.focus('#' + buRows[buRows.length - 1] + ' .btn.danger'); await p.keyboard.press('Enter'); await p.waitForTimeout(80); await p.keyboard.press('Enter'); await p.waitForTimeout(150);
+check('Budgets: removing the last row goes to the one before', (await act()) === buRows[buRows.length - 2].replace('bu_', 'bu_n_'), [await act(), buRows]);
+await p.click('#t-due'); await p.waitForTimeout(100); await p.click('#remAdd'); await p.waitForTimeout(100);
+await p.fill('#' + (await act()), 'Boiler service'); await p.waitForTimeout(600);
+await p.focus('#dueList .ed .btn.danger'); await p.keyboard.press('Enter'); await p.waitForTimeout(80); await p.keyboard.press('Enter'); await p.waitForTimeout(150);
+check('Reminders: "Delete reminder", confirmed: focus isn\'t lost', (await act()) !== 'BODY' && !(await LS(p, K.cfg)).reminders.some(r => r.name === 'Boiler service'), await act());
+check('No JS errors (focus)', p.errs.length === 0, p.errs.join(' | '));
 await ctx.close();
 await finish();

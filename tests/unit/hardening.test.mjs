@@ -101,3 +101,96 @@ test('migrate: the 1.x people come from the data, with plain account names', () 
   assert.deepEqual(m2['2026-09'].pay, { jo: 1700, chris_b: null });
   assert.deepEqual(m2['2026-09'].done, { 't:jbills>cur2': 5, 't:cur1>jbills': 6, 't:jbills>jspend': 7 });
 });
+
+// ---------- 2.13: a restore says what it couldn't use ----------
+const acc = (id, o = {}) => Object.assign({ id, name: id, colour: 'blue', leftoverTo: null }, o);
+const bill = (id, amount, account, o = {}) => Object.assign({ id, name: id, amount, account, months: [] }, o);
+// A made-up 2.12.1 household with every newer field: shares, set amounts, board, a closed account, a change of style,
+// a dated bill, a budget that starts later and a deleted bill.
+const full = () => household({ payday: { day: 28 },
+  people: [{ id: 'kim', name: 'Kim', payAccount: 'K', usualPay: 3000 }, { id: 'lee', name: 'Lee', payAccount: 'L', usualPay: 2000 }, { id: 'kit', name: 'Kit', payAccount: 'T', usualPay: 900, boarder: true }],
+  accounts: [acc('K'), acc('L'), acc('T'), acc('O', { closedFrom: '2026-09' }),
+    acc('J', { funding: { people: ['kim', 'lee', 'kit'], rule: 'pay', set: { kit: { amount: 400 }, lee: { pct: 10 } } } })],
+  flows: [{ from: '2026-09', was: { accounts: { K: { leftoverTo: 'J' }, L: { leftoverTo: 'J' }, T: { leftoverTo: null }, O: { leftoverTo: null }, J: { leftoverTo: null } }, pay: { kim: 'K' }, items: { bills: { gym: 'O' } }, boarders: [] } }],
+  bills: [bill('rent', 1500, 'J'), bill('energy', 150, 'J', { was: [{ until: '2026-09', amount: 120, account: 'J', months: [] }] }), bill('gym', 30, 'J')],
+  budgets: [{ id: 'fun', name: 'Fun', amount: 100, account: 'J', start: '2026-10' }],
+  savings: [{ id: 'sv', name: 'Rainy day', amount: 100, fromAccount: 'J' }], income: [{ id: 'cb', name: 'Benefit', amount: 100, account: 'J' }],
+  ended: { bills: [Object.assign(bill('tv', 14, 'J'), { ended: '2026-10' })] } });
+const fullMonths = () => ({ '2026-08': { pay: { kim: 3000, lee: 2000, kit: 900 }, done: { 't:K>J': 1000 }, oneOffs: [] }, '2026-09': { pay: { kim: 3100 }, done: {}, oneOffs: [{ id: 'o1', kind: 'out', name: 'Gift', amount: 50, account: 'K' }] } });
+
+test('normCfg and normMonths: sound data from any version reports nothing', () => {
+  for (const c0 of [SAMPLE.config, sampleUpgraded().c, full(), household({})]) {
+    const rep = []; const c = P.normCfg(c0, rep);
+    assert.deepEqual(rep, [], JSON.stringify(rep));
+    const rep2 = []; assert.equal(JSON.stringify(P.normCfg(c, rep2)), JSON.stringify(c)); assert.deepEqual(rep2, []);
+  }
+  for (const m0 of [SAMPLE.months, sampleUpgraded().m, fullMonths(), {}, null, undefined]) { const rep = []; P.normMonths(m0, rep); assert.deepEqual(rep, [], JSON.stringify(m0)); }
+  // and the made-up 2.12.1 household goes through exactly as it was
+  assert.equal(JSON.stringify(P.normCfg(full())), JSON.stringify(full()));
+  // Someone removed in Settings stays in a share's list until the next open: dropped without a word.
+  const c = full(); c.people.pop(); const rep = []; P.normCfg(c, rep); assert.deepEqual(rep, []);
+});
+
+test('normCfg: a negative amount is kept in the data but counted as £0, and reported', () => {
+  const c0 = full(); c0.bills[0].amount = -50; c0.budgets[0].amount = -1; c0.savings[0].amount = '-20'; c0.income[0].amount = -100;
+  const rep = [], c = P.normCfg(c0, rep);
+  assert.deepEqual(rep, ['a bill with a negative amount (counted as £0)', 'a spending budget with a negative amount (counted as £0)', 'a savings transfer with a negative amount (counted as £0)', 'other income with a negative amount (counted as £0)']);
+  assert.equal(c.bills[0].amount, 0); assert.equal(c.bills[0].badAmount, -50);
+  assert.equal(c.savings[0].amount, 0); assert.equal(c.savings[0].badAmount, '-20');
+  // The calculation counts it as nothing: the same transfers as with a £0 rent.
+  const zero = full(); zero.bills[0].amount = 0; zero.budgets[0].amount = 0; zero.savings[0].amount = 0; zero.income[0].amount = 0;
+  const pay = { kim: 3000, lee: 2000, kit: 900 }, a = P.calc(c, 11, pay, []), b = P.calc(P.normCfg(zero), 11, pay, []);
+  assert.deepEqual(a.steps.map(s => [s.id, s.amt]), b.steps.map(s => [s.id, s.amt]));
+  assert.deepEqual(a.floats, b.floats);
+  // Opened again it says nothing more, and once the bill has an amount again the old one is let go.
+  const rep2 = []; assert.equal(JSON.stringify(P.normCfg(c, rep2)), JSON.stringify(c)); assert.deepEqual(rep2, []);
+  c.bills[0].amount = 1400; const c3 = P.normCfg(c); assert.equal(c3.bills[0].amount, 1400); assert.ok(!('badAmount' in c3.bills[0]));
+});
+
+test('normCfg: everything it drops or fixes is described, without names or amounts', () => {
+  const c0 = full();
+  c0.flows.push({ from: '2026-9', was: { accounts: {}, pay: {} } }, { from: '2026-09', was: { accounts: {}, pay: {} } }, 'junk');
+  c0.accounts[4].funding.rule = 'byRoom';
+  c0.accounts[3].closedFrom = 'soon';
+  c0.bills[1].was.push({ until: '2026-13', amount: 1 }, { until: '2026-07', amount: -5, account: 'J', months: [] });
+  c0.budgets[0].start = '2026';
+  c0.ended.bills.push({ id: 'x', name: 'Old', amount: 1, account: 'J', ended: 'later' });
+  c0.bills[2].months = [1, 13];
+  c0.payday.day = 'Friday';
+  c0.people.push(null); c0.reminders = [4];
+  const rep = [], c = P.normCfg(c0, rep);
+  assert.deepEqual([...new Set(rep)].sort(), ['a bill month that isn\'t January to December', 'a change of style that couldn\'t be read', 'a change of style with a bad month', 'a closed account with a bad month',
+    'a deleted item with a bad month', 'a payday that isn\'t a day of the month', 'a person that couldn\'t be read', 'a reminder that couldn\'t be read', 'a second change of style in the same month',
+    'a share rule Dovetail doesn\'t know', 'a spending budget with a bad first month', 'an earlier amount that couldn\'t be used', 'an earlier amount with a bad month'].sort());
+  assert.ok(rep.every(t => !/Kim|Lee|Kit|rent|energy|\d{2}/i.test(t)), 'no names or amounts');
+  // What's kept: the good change of style; the account, without its unknown rule.
+  assert.deepEqual(c.flows.map(f => f.from), ['2026-09']); assert.ok(!('funding' in c.accounts[4]));
+  // A set amount that can't be used, and a share rule that isn't an object.
+  const c1 = full(); c1.accounts[4].funding.set.kit = { amount: -400 }; c1.accounts[0].funding = 'half';
+  const r1 = []; P.normCfg(c1, r1); assert.deepEqual(r1, ['a share rule that couldn\'t be read', 'a set amount that couldn\'t be used (negative, or over 100%)']);
+  // Without a list, normCfg gives the same settings.
+  assert.equal(JSON.stringify(P.normCfg(full())), JSON.stringify(P.normCfg(full(), [])));
+});
+
+test('normMonths: a month with a bad date is kept and reported, and left out of the calculations', () => {
+  const m0 = Object.assign(fullMonths(), { '2026-13': { pay: { kim: 9999 }, done: { 't:K>J': 1 } }, junk: { pay: { kim: 8888 } }, '2026-10': { done: 'yes', pay: [1], oneOffs: [null, { id: 'o', amount: 1 }] }, '2026-11': 7 });
+  const rep = [], m = P.normMonths(m0, rep);
+  assert.deepEqual(rep.sort(), ['a month that couldn\'t be read', 'a month with a bad date (left out)', 'a month with a bad date (left out)', 'a one-off that couldn\'t be read', 'pay that couldn\'t be read', 'ticks that couldn\'t be read']);
+  assert.ok('2026-13' in m && 'junk' in m, 'kept in the data'); assert.ok(!('2026-11' in m));
+  // Left out: the latest typed pay before 2027 is September's, not "2026-13"'s; Analysis's months and averages skip it.
+  assert.deepEqual(P.payEstimate(full(), m, 'kim', '2027-02'), { v: 3100, from: '2026-09' });
+  assert.deepEqual(P.usedMonths(m, '2027-12'), ['2026-08', '2026-09']);
+  assert.deepEqual(P.typedPayMonths(m, '2027-12'), ['2026-08', '2026-09']);
+  assert.equal(P.avgIncome(full(), m, '2027-02').people.find(x => x.id === 'kim').avg, 3050);
+  assert.equal(P.hasHistory({ '2026-13': { done: { x: 1 } } }, '2027-01'), false);
+  assert.equal(P.hasHistory({ '2026-12': { done: { x: 1 } } }, '2027-01'), true);
+  const r2 = []; P.normMonths('x', r2); assert.deepEqual(r2, ['saved months that couldn\'t be read']);
+});
+
+test('reportSentence: one sentence, each kind once, at most three, then "and N more"', () => {
+  assert.equal(P.reportSentence([]), ''); assert.equal(P.reportSentence(undefined), '');
+  assert.equal(P.reportSentence(['a']), 'Some things couldn\'t be used: a.');
+  assert.equal(P.reportSentence(['a', 'b', 'a']), 'Some things couldn\'t be used: a and b.');
+  assert.equal(P.reportSentence(['a', 'b', 'c']), 'Some things couldn\'t be used: a, b and c.');
+  assert.equal(P.reportSentence(['a', 'b', 'c', 'd', 'e', 'd']), 'Some things couldn\'t be used: a, b, c and 2 more.');
+});

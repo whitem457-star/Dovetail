@@ -286,6 +286,8 @@ fieldset.seg{border:0;margin:0;padding:0;min-width:0}
 .hero .hwarn{grid-column:1 / -1;font-size:.8125rem;font-weight:600;color:var(--bad);margin-top:6px}
 .hero.neg .hv{color:var(--bad)}
 .hero .where{display:flex;align-items:center;gap:7px;font-size:.8125rem;color:var(--muted);margin-top:8px}
+.hero .keeps{display:flex;flex-wrap:wrap;column-gap:8px;font-size:.8125rem;font-weight:600;color:var(--ink);margin-top:4px}
+.hero .keeps span{overflow-wrap:anywhere}
 .hero .ring{position:relative;width:76px;height:76px}
 .hero .ring svg{width:76px;height:76px;transform:rotate(-90deg)}
 .hero .ring circle{fill:none;stroke-width:7}.hero .ring .rb{stroke:var(--ring)}.hero .ring .rf{stroke:var(--accent);stroke-linecap:round}
@@ -350,6 +352,17 @@ fieldset.su-q legend{font-size:.875rem;color:var(--ink);margin-bottom:8px}
 .su-shape input:checked+.su-shape-b .su-radio::after{content:"";width:10px;height:10px;border-radius:50%;background:var(--accent)}
 .su-shape-t{display:flex;flex-direction:column;gap:2px;font-size:.875rem;min-width:0}
 .su-shape-t b{font-size:.9375rem}
+.su-shape-b.t{grid-template-columns:auto minmax(0,1fr)}
+.su-q+.su-q,.su-shapes+.su-q,.su-q+.su-shapes,.su-amt+.su-q{margin-top:14px}
+.su-amt{margin-top:8px}
+#setup h3#su_h_board,#chBox h5#su_h_board{margin-top:18px}
+/* 2.12: setup's step drawn in Settings › Accounts (changing how the household manages its money): the same look, one
+   heading level down. */
+#chBox h4,#chBox h5{margin:0;text-wrap:balance}
+#chBox h4{font-size:.9375rem;font-weight:600;color:var(--ink)}
+#chBox h5{font:700 .8125rem/1.35 var(--f-body)}
+#chBox>.su-head h3{font-size:1.0625rem;font-weight:700;font-family:var(--f-display)}
+.su-fund{margin:0;color:var(--muted)}
 .mini{display:flex;flex-direction:column;align-items:center;gap:1px;width:64px}
 .mini .mrow{display:flex;justify-content:center;gap:3px;width:100%}
 .mini i{flex:0 1 18px;min-width:8px;height:11px;border-radius:3px;border:2px solid var(--c);background:var(--surface)}
@@ -377,6 +390,8 @@ fieldset.su-q legend{font-size:.875rem;color:var(--ink);margin-bottom:8px}
 .fd-arrow{display:none;align-items:center;justify-content:center;gap:6px;padding:6px 0 2px;font-size:.75rem;font-weight:600;color:var(--muted)}
 .fd-ah{font-size:1.125rem;line-height:1;color:var(--ink)}
 .fd-to{padding:6px 0 4px 12px;font-size:.8125rem;font-weight:600;color:var(--muted)}
+.fd-pays{padding:4px 0 2px 12px;font-size:.8125rem;font-weight:600;color:var(--muted)}
+.fd-in .chip.share{background:transparent;border:1px dashed var(--ctl)}
 .fd li.adj .fd-arrow{display:flex}.fd li.adj .fd-to{display:none}
 @media (min-width:400px){
   html:not([data-text="large"]) .fd.side{flex-direction:row;flex-wrap:wrap;gap:6px 10px}
@@ -398,6 +413,7 @@ fieldset.su-q legend{font-size:.875rem;color:var(--ink);margin-bottom:8px}
 .su-left{display:flex;flex-direction:column;gap:2px;padding-top:12px;border-top:1px solid var(--hair)}
 .su-left .hv{font-size:2.25rem;line-height:1.1}
 .su-left.neg .hv{color:var(--bad)}.su-left.neg .hv .p{color:inherit}
+.su-left .hwarn{font-size:.8125rem;font-weight:600;color:var(--bad);margin-top:4px;overflow-wrap:anywhere}
 .su-how{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:12px;counter-reset:how}
 .su-how li{display:grid;grid-template-columns:40px minmax(0,1fr);gap:12px;align-items:center;counter-increment:how}
 .su-how li>span:last-child::before{content:counter(how) ". ";font-weight:700}
@@ -462,6 +478,25 @@ fieldset.su-q legend{font-size:.875rem;color:var(--ink);margin-bottom:8px}
 .su-bline{display:flex;flex-wrap:wrap;align-items:center;gap:0 6px;border-left:5px solid var(--c);background:var(--surface);border-radius:var(--r-in);box-shadow:var(--shadow);padding:2px 12px;min-width:0}
 .su-bline b{font-weight:600;overflow-wrap:anywhere;min-width:0}
 .su-bline .linkbtn{min-height:44px}
+/* The Dovetail mark (2.11): on the first setup screen and in Settings › About. */
+.mark{display:block;flex:none;aspect-ratio:46/52;height:auto}
+.su-mark{width:3rem}
+.about-brand{display:flex;align-items:center;gap:10px;color:var(--ink)}
+.about-brand .mark{width:2rem}
+.about-brand b{font:700 1.25rem/1 var(--f-display);letter-spacing:-.01em}
+.dated{display:flex;flex-wrap:wrap;align-items:center;gap:2px 12px;background:var(--sunk);border-radius:10px;padding:8px 12px}
+.dated .linkbtn{min-height:44px}
+details.fund{border-top:1px solid var(--hair);margin-top:4px;padding-top:4px}
+details.fund>summary{list-style:none;cursor:pointer;min-height:44px;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:10px;padding:4px 0}
+details.fund>summary::-webkit-details-marker{display:none}
+details.fund>summary>span{grid-column:1;overflow-wrap:anywhere}
+details.fund>summary::after{content:"";grid-column:2;grid-row:1/span 2;width:8px;height:8px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:rotate(45deg) translate(-2px,-2px);margin-right:4px}
+details.fund[open]>summary::after{transform:rotate(-135deg) translate(-2px,-2px)}
+.fund-in{display:flex;flex-direction:column;gap:10px;padding:6px 0 4px}
+.fund-in p{margin:0}
+.fund-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}
+@media (max-width:399px){.fund-row{grid-template-columns:minmax(0,1fr)}}
+html[data-text="large"] .fund-row{grid-template-columns:minmax(0,1fr)}
 .changed-v>summary{cursor:pointer;font-weight:600;color:var(--ink);min-height:44px;display:flex;align-items:center}
 .changed-v ul{margin:4px 0 8px;padding-left:1.2em;display:flex;flex-direction:column;gap:4px;color:var(--ink)}
 @keyframes sheetin{from{transform:translateY(30px);opacity:0}to{transform:none;opacity:1}}

@@ -156,6 +156,7 @@ await p.click('#tourStart'); await p.waitForTimeout(400);
 check('"Show me around" starts the tour on the Pay tab', await shown(p) && (await p.evaluate(() => location.hash)) === '#pay' && (await stopId(p)) === 'month' && (await T(p, '#tourN')) === '1 of 9');
 for (let i = 0; i < 6; i++) { await p.click('#tourNext'); await p.waitForTimeout(80); }
 check('(set-up) on the Analysis stop', (await stopId(p)) === 'analysis' && (await p.evaluate(() => location.hash)) === '#analysis');
+check('2.13: the Analysis stop is about the months ahead and whether any account will be short', (await T(p, '#tourH')) === 'See the months ahead' && (await T(p, '#tourT')).includes('whether any account will be short'), await T(p, '#tourT'));
 await p.click('#tourBack'); await p.waitForTimeout(400);
 check('Back from Analysis goes back to the Pay tab\'s last stop, still in place', (await stopId(p)) === 'notevery' && (await p.evaluate(() => location.hash)) === '#pay' && (await geo(p)).ok, JSON.stringify(await geo(p)));
 await p.click('#tourNext'); await p.waitForTimeout(150);
@@ -228,12 +229,15 @@ await p.click('#t-settings'); await p.click('#sHelp summary'); await p.click('#h
 check('"How Dovetail works": the routine, the flow of money with the household\'s own diagram, left over and pay months', (await T(p, '#sheetH')) === 'How Dovetail works' &&
   (await p.$$eval('#sheetB .how li', l => l.map(x => x.textContent))).length === 3 && (await p.$$('#sheetB .fd li')).length === 4 && (await p.getAttribute('#sheetB .fd', 'aria-labelledby')) === 'howFlowH' &&
   (await T(p, '#sheetB')).includes('What left over means') && (await T(p, '#sheetB')).includes('A pay month runs from one payday to the next'));
+check('2.13: …and own accounts that pay shares in, board, and changes from this pay month',
+  (await T(p, '#sheetB')).includes("your own account keeps what's left of your pay after your share") && (await T(p, '#sheetB')).includes('Someone who pays board pays a set amount') && (await T(p, '#sheetB')).includes('a change to a bill, budget or savings transfer applies from this pay month'), await T(p, '#sheetB'));
 const ax2 = await axe(p); check('Accessibility of "How Dovetail works"', ax2.length === 0, ax2.join(' | '));
 await p.click('#sheetClose'); await p.waitForTimeout(100);
 check('…closing it returns focus to its button', (await focusId(p)) === 'helpHow');
 await p.click('#helpWords'); await p.waitForTimeout(150);
 const terms = await p.$$eval('#sheetB dt', d => d.map(x => x.textContent));
-check('"Words Dovetail uses": a glossary of the eleven words', JSON.stringify(terms) === JSON.stringify(['Take-home pay', 'Pay month', 'Transfer', 'Left over', 'One-off', 'Spending budget', 'Savings transfer', 'Direct Debit', 'Standing Order', 'Renewal', 'Tax year']), terms.join(','));
+// 2.13: Board, after Share.
+check('"Words Dovetail uses": a glossary of the thirteen words', JSON.stringify(terms) === JSON.stringify(['Take-home pay', 'Pay month', 'Transfer', 'Left over', 'One-off', 'Share', 'Board', 'Spending budget', 'Savings transfer', 'Direct Debit', 'Standing Order', 'Renewal', 'Tax year']), terms.join(','));
 check('…in short sentences (none over about 20 words)', await p.$$eval('#sheetB dd', d => d.every(x => x.textContent.split(/(?<=\.)\s+/).every(s => s.split(/\s+/).length <= 21))));
 await p.keyboard.press('Escape'); await p.waitForTimeout(100);
 check('No JS errors (help)', p.errs.length === 0, p.errs.join(' | '));

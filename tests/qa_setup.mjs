@@ -39,17 +39,21 @@ check('An income with no amount is flagged and setup waits', (await title()) ===
   await p.$eval('#su_inv_0', e => e.classList.contains('bad') && e.getAttribute('aria-invalid') === 'true') && (await focusId()) === 'su_inv_0');
 await p.fill('#su_inv_0', '110'); await p.fill('#su_pu_0', '21x'); await p.click('#su_next'); await p.waitForTimeout(50);
 check('Pay that isn\'t an amount is flagged', (await title()) === 'Your pay' && (await T(p, '#su_msg')).includes('like 1850.00') && (await focusId()) === 'su_pu_0');
-await p.fill('#su_pu_0', '2100'); await p.click('#su_next'); await p.waitForTimeout(50);
-check('No pay for the second person: a gentle note (not an error), once', (await title()) === 'Your pay' && (await T(p, '#su_msg')) === "Without pay, Dovetail can't show what's left. You can add it later." &&
+await p.fill('#su_pu_0', ''); await p.click('#su_next'); await p.waitForTimeout(50);
+check('No pay for anyone: a gentle note (not an error), once', (await title()) === 'Your pay' && (await T(p, '#su_msg')) === "Without pay, Dovetail can't show what's left. You can add it later." &&
   await p.$eval('#su_msg', e => e.classList.contains('banner') && !e.classList.contains('err')) && (await p.$('#setup .bad')) === null);
 await p.click('#su_next'); await p.waitForTimeout(50);
 check('…and the second tap carries on to the payday', (await title()) === 'Your payday');
+await p.click('#su_back'); await p.waitForTimeout(50);
+await p.fill('#su_pu_0', '2100'); await p.click('#su_next'); await p.waitForTimeout(50);
+check('2.12.1: one person\'s pay in and the other\'s not (a partner at home, say): Next goes straight on', (await title()) === 'Your payday');
 await p.click('#su_back'); await p.waitForTimeout(50);
 check('Back keeps what was typed; the empty name became "Person 2"', (await p.inputValue('#su_p_0')) === 'Alex' && (await p.inputValue('#su_p_1')) === 'Person 2' &&
   Number(await p.inputValue('#su_pu_0')) === 2100 && (await p.inputValue('#su_in_0')) === 'Child Benefit' && (await focusId()) === 'suTitle');
 await p.fill('#su_p_1', 'Sam'); await p.fill('#su_pu_1', '1850'); await p.click('#su_next'); await p.waitForTimeout(50);
 // step 3
-check('Step 3 first asks whether everyone is paid on the same day', (await title()) === 'Your payday' && (await txt()).includes('Are you all paid on the same day?') && (await p.$('#su_day')) === null);
+// 2.13: "both" for two people.
+check('Step 3 first asks whether everyone is paid on the same day', (await title()) === 'Your payday' && (await txt()).includes('Are you both paid on the same day?') && (await p.$('#su_day')) === null);
 check('…and can be skipped', await p.isVisible('#su_skip') && await p.isVisible('#su_later'));
 await p.click('label[for=su_same_no]'); await p.waitForTimeout(50);
 check('"No": pick the day the transfers are made', (await txt()).includes("Pick the day you'll make the transfers, once everyone's pay is in.") && await p.isVisible('#su_day') && (await focusId()) === 'su_same_no');
@@ -63,12 +67,18 @@ await p.selectOption('#su_day', '1'); await p.waitForTimeout(50);
 check('The 1st: that pay is for its own month', (await T(p, '#su_next_payday')) === 'Your next payday: Friday 30 October. That pay is for November 2026.' && (await p.selectOption('#su_day', '10'), (await T(p, '#su_next_payday')) === 'Your next payday: Tuesday 10 November. That pay is for November 2026.'), await T(p, '#su_next_payday'));
 await p.selectOption('#su_day', '28'); await p.click('#su_next'); await p.waitForTimeout(50);
 // step 4
-check('Step 4 explains how money moves, before any accounts', (await title()) === 'Your accounts' && (await txt()).includes('Each payday, pay lands in an account. That account pays its own bills first.') && (await p.$('#su_a_0')) === null);
-const shapes = await p.$$eval('#setup .su-shape', l => l.map(x => x.querySelector('b').textContent));
-check('Four starting points, worded for two people', JSON.stringify(shapes) === JSON.stringify(['One joint account', 'Our own accounts, then a joint one', 'Separate accounts for bills and spending', 'Something else']), shapes.join(' | '));
-check('…a radio group, each with a decorative diagram', (await p.getAttribute('#setup .su-shapes', 'role')) === 'radiogroup' && (await p.$$('#setup .su-shape input[type=radio]')).length === 4 && (await p.$$('#setup .su-shape .mini[aria-hidden=true]')).length === 4);
+const styles = await p.$$eval('#setup fieldset:has(#su_style_pool) .su-shape b', l => l.map(x => x.textContent));
+check('Step 4 asks how the household manages its money first, before any accounts', (await title()) === 'Your accounts' && (await txt()).includes('In our house we manage our money by…') && (await p.$('#su_a_0')) === null &&
+  JSON.stringify(styles) === JSON.stringify(['Putting it all together', 'Each paying into a joint account', 'One of us paying the bills', 'Each paying certain bills', 'Something else']), styles.join(' | '));
 await p.click('#su_next'); await p.waitForTimeout(50);
-check('Next without a starting point says what to do', (await title()) === 'Your accounts' && (await T(p, '#su_msg')).includes('Pick how your money moves first'));
+check('Next without an answer says what to do', (await title()) === 'Your accounts' && (await T(p, '#su_msg')).includes('Choose how you manage your money first'), await T(p, '#su_msg'));
+await p.check('#su_style_pool'); await p.waitForTimeout(50);
+check('Putting it all together: then how money moves', (await txt()).includes('Each payday, pay lands in an account. That account pays its own bills first.') && (await p.$('#su_a_0')) === null);
+const shapes = await p.$$eval('#setup fieldset:has(#su_shape_joint) .su-shape', l => l.map(x => x.querySelector('b').textContent));
+check('Three starting points, worded for two people', JSON.stringify(shapes) === JSON.stringify(['One joint account', 'Our own accounts, then a joint one', 'Separate accounts for bills and spending']), shapes.join(' | '));
+check('…a radio group, each with a decorative diagram', (await p.getAttribute('#setup fieldset:has(#su_shape_joint)', 'role')) === 'radiogroup' && (await p.$$('#setup .su-shape input[name=su_shape]')).length === 3 && (await p.$$('#setup .su-shape .mini[aria-hidden=true]')).length === 3);
+await p.click('#su_next'); await p.waitForTimeout(50);
+check('Next without a starting point says what to do', (await title()) === 'Your accounts' && (await T(p, '#su_msg')).includes('Choose how pay reaches the joint account'), await T(p, '#su_msg'));
 await p.check('#su_shape_split'); await p.waitForTimeout(50);
 const accNames = () => p.$$eval('#setup .su-acct input[id^=su_a_]', l => l.map(x => x.value));
 check('Separate accounts for bills and spending: own accounts, then Joint bills, then Joint spending', JSON.stringify(await accNames()) === JSON.stringify(["Alex's account", "Sam's account", 'Joint bills', 'Joint spending']), (await accNames()).join(' | '));
@@ -79,8 +89,9 @@ const story = () => p.$$eval('#setup .fd li > .sr', l => l.map(x => x.textConten
 check('The diagram is a list a screen reader reads as sentences', JSON.stringify(await story()) === JSON.stringify(["Alex's pay arrives in Alex's account. What's left moves to Joint bills.", "Sam's pay arrives in Sam's account. What's left moves to Joint bills.",
   "Joint bills gets what's left from Alex's account and Sam's account. What's left moves to Joint spending.", "Child Benefit arrives in Joint spending. It also gets what's left from Joint bills. It keeps what's left: your left over."]), (await story()).join(' | '));
 check('…the drawing is hidden from screen readers, and the last account says it keeps what\'s left', (await p.$$('#setup .fd li > .fd-v[aria-hidden=true]')).length === 4 && (await p.$eval('#setup .fd li.root', e => e.textContent)).includes("Keeps what's left: your left over"));
-check('A worked example from their own figures', (await T(p, '#su_example_line')) === "For example: if Alex's account has £20 of bills, the rest of Alex's pay, £2,080.00, moves to Joint bills.", await T(p, '#su_example_line'));
-check('The diagram comes straight after the choice, before "Check your accounts"', await p.evaluate(() => { const d = document.getElementById('su_dia'), f = document.querySelector('#setup .su-shapes'), c = document.getElementById('su_h_check');
+// 2.13: no bills are typed yet, so the example says what moves in words, not with an invented £20 of bills.
+check('A worked example from their own figures', (await T(p, '#su_example_line')) === "For example: Alex's pay arrives in Alex's account, and what's left after its bills moves to Joint bills.", await T(p, '#su_example_line'));
+check('The diagram comes straight after the choice, before "Check your accounts"', await p.evaluate(() => { const d = document.getElementById('su_dia'), f = document.querySelector('#setup fieldset:has(#su_shape_joint)'), c = document.getElementById('su_h_check');
   return d.closest('section') === f.closest('section') && !!(f.compareDocumentPosition(d) & Node.DOCUMENT_POSITION_FOLLOWING) && !!(d.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_FOLLOWING); }));
 const fsz = s => p.$eval(s, e => parseFloat(getComputedStyle(e).fontSize));
 check('Sub-headings are smaller than their card\'s title', (await fsz('#su_h_dia')) < (await fsz('#su_h_move')) && (await fsz('#su_h_where')) < (await fsz('#su_h_check')), [await fsz('#su_h_dia'), await fsz('#su_h_move'), await fsz('#su_h_where'), await fsz('#su_h_check')].join(','));
@@ -88,7 +99,7 @@ check('"Remove" is a quiet link on the account name\'s line', (await p.$$('#setu
 check('An account can\'t send what\'s left to itself or to an account that sends to it', !(await p.$$eval('#su_l_2 option', o => o.map(x => x.textContent))).some(t => /Joint bills|Alex|Sam/.test(t)) &&
   !(await p.$$eval('#su_l_3 option', o => o.map(x => x.textContent))).some(t => t.includes('moves to')));
 await p.focus('#su_shape_split'); await p.keyboard.press('ArrowDown'); await p.waitForTimeout(80);
-check('Arrow keys move between starting points; with nothing edited, no question', await p.isChecked('#su_shape_other') && (await focusId()) === 'su_shape_other' && JSON.stringify(await accNames()) === '["Joint account"]' && (await p.$('#su_replace')) === null);
+check('Arrow keys move between starting points; with nothing edited, no question', await p.isChecked('#su_shape_joint') && (await focusId()) === 'su_shape_joint' && JSON.stringify(await accNames()) === '["Joint account"]' && (await p.$('#su_replace')) === null);
 await p.keyboard.press('ArrowUp'); await p.waitForTimeout(80);
 check('…and back', await p.isChecked('#su_shape_split') && (await accNames()).length === 4);
 await p.fill('#su_a_2', 'Bills pot'); await p.check('#su_shape_own'); await p.waitForTimeout(80);
@@ -207,7 +218,8 @@ for (const n of [1, 2]) {
   const words = await p.$$eval('#setup .su-shape b', l => l.map(x => x.textContent));
   if (n === 1) check('One person: the starting points are worded for one', JSON.stringify(words) === JSON.stringify(['My account', 'A bills account and a spending account', 'My pay account, a bills account and a spending account', 'Something else']), words.join(' | '));
   for (const kind of ['joint', 'own', 'split', 'other']) {
-    await p.check('#su_shape_' + kind); await p.waitForTimeout(50);
+    if (n === 2) await p.check(kind === 'other' ? '#su_style_other' : '#su_style_pool');
+    if (n === 1 || kind !== 'other') await p.check('#su_shape_' + kind); await p.waitForTimeout(50);
     const got = [await p.$$eval('#setup .su-acct input[id^=su_a_]', l => l.map(x => x.value)), await p.$$eval('#setup .fd li > .sr', l => l.map(x => x.textContent))];
     check(`${n === 1 ? 'One person' : 'Two people'}, "${kind}": the expected accounts and flow`, JSON.stringify(got) === JSON.stringify(EXPECT[n][kind]), JSON.stringify(got));
   }
@@ -224,7 +236,8 @@ for (const n of [1, 2]) {
   if (n === 2) { await p.click('#su_addp'); await p.fill('#su_p_1', 'Kim'); await p.fill('#su_pu_1', '1200'); }
   await p.click('#su_next'); await p.click('#su_skip'); await p.waitForTimeout(50);
   for (const kind of ['joint', 'own', 'split', 'other']) {
-    await p.check('#su_shape_' + kind); await p.waitForTimeout(50); await p.click('#su_next'); await p.waitForTimeout(50);
+    if (n === 2) await p.check(kind === 'other' ? '#su_style_other' : '#su_style_pool');
+    if (n === 1 || kind !== 'other') await p.check('#su_shape_' + kind); await p.waitForTimeout(50); await p.click('#su_next'); await p.waitForTimeout(50);
     const open = await p.$$eval('#setup .su-bsec', l => l.filter(x => x.querySelector('.qa-row')).map(x => x.querySelector('h2').textContent + ': ' + x.querySelectorAll('.qa-row').length + ' rows'));
     check(`${n === 1 ? 'One person' : 'Two people'}, "${kind}": the bills step opens ${BILLS_OPEN[n][kind]} with three rows, and only that`, JSON.stringify(open) === JSON.stringify(['Paid from ' + BILLS_OPEN[n][kind] + ': 3 rows']), JSON.stringify(open));
     await p.click('#su_back'); await p.waitForTimeout(50);
@@ -409,7 +422,7 @@ for (const names of [['Christopher', 'Alexandra'], ['Christopher', 'Alexandra', 
   ({ ctx, p } = await session({ w: 400 }));
   await p.click('#su_start');
   for (let i = 0; i < names.length; i++) { if (i) await p.click('#su_addp'); await p.fill('#su_p_' + i, names[i]); await p.fill('#su_pu_' + i, '1500'); }
-  await p.click('#su_next'); await p.click('#su_skip'); await p.check('#su_shape_split'); await p.waitForTimeout(80);
+  await p.click('#su_next'); await p.click('#su_skip'); await p.check('#su_style_pool'); await p.check('#su_shape_split'); await p.waitForTimeout(80);
   const side = names.length === 2, tag = `${names.length} people with long names at 400px`;
   const places = [['setup step 4', '#su_dia .fd']];
   let d = await diagram('#su_dia .fd');

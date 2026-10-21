@@ -3,6 +3,8 @@
 // the Pay tab ("Update from this file?"). A backup from a different household still gets the
 // full confirmation in Settings (qa_share.mjs has the rest of that).
 import { suite, session, sampleStorage, household, SAMPLE, K, T, LS, axe, noSideScroll } from './lib.mjs';
+// Only the calls that send something: the page's own timers (the backup and the notification schedule) can land between two counts on a busy machine.
+const sent = calls => calls.filter(c => ['share', 'shareText', 'shareUpdate', 'shareFiles', 'feedback'].includes(c[0]));
 const { check, finish } = suite('2.10: updates from the other phone');
 const send = (p, v, ok) => p.evaluate(([v, ok]) => window.paydayNativeEvent('import', v, ok), [v, ok]);
 const nat = p => p.evaluate(() => window.__qaNative);
@@ -33,7 +35,7 @@ check('…and the file is a whole backup, with the pay typed a moment ago and th
 await p.click('#shareTransfers'); await p.waitForTimeout(150);
 check('2.10.1: Share asks what to send (WhatsApp drops the message when a file goes with it)', await p.isVisible('#sheet') && (await T(p, '#sheetH')) === 'Share this month' &&
   (await p.textContent('#shareAsText')) === 'Send the transfers as a message' && (await p.textContent('#shareAsFile')) === 'Send an update for the other phone' && (await p.evaluate(() => document.activeElement.id)) === 'sheetH');
-check('…nothing is sent until one is chosen', (await nat(p)).calls.length === n.calls.length);
+check('…nothing is sent until one is chosen', sent((await nat(p)).calls).length === sent(n.calls).length);
 check('No axe violations with the choice showing', (await axe(p)).length === 0, (await axe(p)).join(' | '));
 await p.keyboard.press('Tab');
 check('Keyboard: Tab from the title reaches the two choices in order', (await p.evaluate(() => document.activeElement.id)) === 'shareAsText' && (await p.keyboard.press('Tab'), await p.evaluate(() => document.activeElement.id)) === 'shareAsFile');
@@ -42,7 +44,7 @@ n = await nat(p);
 check('"Send the transfers as a message" sends the text only', n.calls[n.calls.length - 1][0] === 'shareText' && n.calls.filter(c => c[0] === 'shareUpdate').length === 1 &&
   String(n.lastText).startsWith('Dovetail transfers for ' + month + '\n1. ') && !String(n.lastText).includes('Tap the file'));
 await p.click('#shareTransfers'); await p.waitForTimeout(150); await p.click('#sheetClose'); await p.waitForTimeout(150);
-check('Close sends nothing', (await nat(p)).calls.length === n.calls.length && !(await p.isVisible('#sheet')));
+check('Close sends nothing', sent((await nat(p)).calls).length === sent(n.calls).length && !(await p.isVisible('#sheet')));
 // If the app can't prepare the file, it says so (the choice was the file, so no text goes instead).
 await p.evaluate(() => { window.__qaNative.updateFails = true; window.__qaSave(); });
 await p.click('#shareTransfers'); await p.waitForTimeout(150); await p.click('#shareAsFile');
@@ -170,6 +172,47 @@ check('A new install opening an update: restored from setup, as before', await p
 await p.click('#importYes'); await p.waitForTimeout(400);
 check('…giving the same household', (await LS(p, K.cfg)).people.map(x => x.name).join(',') === 'Alex,Sam' && (await LS(p, K.mon))[mk].pay.alex === 2444.44);
 check('No JS errors', p.errs.length === 0, p.errs.join(' | '));
+await ctx.close();
+
+// ---------- E. 2.13: files say which version they need ----------
+// A made-up couple sharing a joint account half each: a phone before 2.13 would show it as short, so the file is version 6.
+const shares = () => ({ [K.cfg]: household({ schema: 5, lastVersion: '2.12.1', payday: { day: 28 },
+  people: [{ id: 'kim', name: 'Kim', payAccount: 'K', usualPay: 3000 }, { id: 'lee', name: 'Lee', payAccount: 'L', usualPay: 2000 }],
+  accounts: [{ id: 'K', name: 'Kim own', colour: 'blue', leftoverTo: null }, { id: 'L', name: 'Lee own', colour: 'red', leftoverTo: null },
+    { id: 'J', name: 'Joint', colour: 'purple', leftoverTo: null, funding: { people: ['kim', 'lee'], rule: 'equal' } }],
+  bills: [{ id: 'rent', name: 'Rent', amount: 1500, account: 'J', months: [] }] }) });
+({ ctx, p } = await session({ storage: shares(), native: true }));
+await p.fill('#pay_kim', '3100'); await p.waitForTimeout(100);
+await p.click('#shareTransfers'); await p.waitForTimeout(150); await p.click('#shareAsFile'); await p.waitForTimeout(150);
+const up6 = (await nat(p)).lastUpdate || {}, f6 = JSON.parse(up6.json || '{}');
+check('A household with shares sends a version 6 update file that needs 2.13', f6.version === 6 && f6.needs === '2.13' && f6.config.accounts[2].funding.rule === 'equal' &&
+  String(up6.json).startsWith('{"app":"payday-transfers","version":6,"needs":"2.13","savedAt":'), String(up6.json).slice(0, 90));
+await p.click('#t-settings'); await p.click('#sBackup summary'); await p.waitForTimeout(60);
+await p.click('#shareBackup'); await p.waitForTimeout(80);
+await p.click('#setBackup .btn.ghost:has-text("Show backup")'); await p.waitForTimeout(60);
+const shown = JSON.parse(await p.inputValue('#backupOut'));
+check('…and so does its backup (shared or copied)', (await nat(p)).calls.some(c => c[0] === 'share') && shown.version === 6 && shown.needs === '2.13');
+await p.waitForTimeout(2700);
+check('…and its automatic backups', (await nat(p)).backups.filter(b => !b.kept).every(b => JSON.parse(b.json).version === 6 && JSON.parse(b.json).needs === '2.13') && (await nat(p)).backups.some(b => !b.kept));
+check('No JS errors (sending a version 6 file)', p.errs.length === 0, p.errs.join(' | '));
+await ctx.close();
+({ ctx, p } = await session({ storage: shares(), native: true }));
+await send(p, up6.json, true); await p.waitForTimeout(250);
+check('Opened on the other phone, a version 6 file is offered as an update', await p.isVisible('#updateOffer #importOffer') && (await p.textContent('#importYes')) === 'Update');
+await p.click('#importYes'); await p.waitForTimeout(400);
+check('…and Update brings it in, shares and all', (await T(p, '#toast')) === 'Updated' && Object.values(await LS(p, K.mon)).some(m => m.pay && m.pay.kim === 3100) && (await LS(p, K.cfg)).accounts[2].funding.rule === 'equal');
+// A file from a later version that says it needs that version.
+const cfgBefore = await p.evaluate(k => localStorage.getItem(k), K.cfg), monBefore9 = await p.evaluate(k => localStorage.getItem(k), K.mon);
+const f9 = JSON.stringify(Object.assign({}, f6, { needs: '9.0' }));
+await send(p, f9, true); await p.waitForTimeout(250);
+check('A file that needs Dovetail 9.0 is refused, naming the version, with no card', (await T(p, '#toast')) === 'This file needs Dovetail 9.0 or later. Update the app first.' && (await p.$('#importOffer')) === null);
+await p.click('#t-settings'); await p.click('#sBackup summary'); await p.waitForTimeout(60);
+await p.fill('#backupIn', f9); await p.click('#restoreBtn'); await p.waitForTimeout(80); if ((await T(p, '#restoreBtn')).includes('Tap again')) await p.click('#restoreBtn'); await p.waitForTimeout(200);
+check('…pasted, it\'s refused the same way', (await T(p, '#restoreMsg')) === 'This file needs Dovetail 9.0 or later. Update the app first.');
+check('…and nothing changes', (await p.evaluate(k => localStorage.getItem(k), K.cfg)) === cfgBefore && (await p.evaluate(k => localStorage.getItem(k), K.mon)) === monBefore9);
+check('A version 6 file without "needs" (no Dovetail writes one) is refused as from a newer version', await (async () => {
+  await send(p, JSON.stringify(Object.assign({}, f6, { needs: undefined })), true); await p.waitForTimeout(150); return (await T(p, '#toast')).includes('newer version of Dovetail'); })());
+check('No JS errors (opening a version 6 file)', p.errs.length === 0, p.errs.join(' | '));
 await ctx.close();
 
 await finish();

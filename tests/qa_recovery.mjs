@@ -125,4 +125,60 @@ await p.reload(); await p.waitForTimeout(300);
 check('They survive reopening the app', (await LS(p, 'payday.errors.v1')).some(e => e.msg.includes('qa boom')));
 await ctx.close();
 
+// ---------- 2.13: a restore says what it couldn't use ----------
+// A made-up, hand-damaged 2.12.1 backup: a negative bill, a share rule from a later version, a change of style dated
+// "2026-9" and a month "2026-13".
+const broken = household({ schema: 5, lastVersion: '2.12', payday: { day: 28 },
+  people: [{ id: 'kim', name: 'Kim', payAccount: 'K', usualPay: 3000 }, { id: 'lee', name: 'Lee', payAccount: 'L', usualPay: 2000 }],
+  accounts: [{ id: 'K', name: 'Kim own', colour: 'blue', leftoverTo: null }, { id: 'L', name: 'Lee own', colour: 'red', leftoverTo: null },
+    { id: 'J', name: 'Joint', colour: 'purple', leftoverTo: null, funding: { people: ['kim', 'lee'], rule: 'byRoom' } }],
+  flows: [{ from: '2026-9', was: { accounts: { K: { leftoverTo: 'J' }, L: { leftoverTo: 'J' }, J: { leftoverTo: null } }, pay: {} } }],
+  bills: [{ id: 'rent', name: 'Rent', amount: -50, account: 'J', months: [] }, { id: 'energy', name: 'Energy', amount: 120, account: 'J', months: [] }] });
+const brokenMonths = { '2026-10': { pay: { kim: 3000, lee: 2000 }, done: {}, oneOffs: [] }, '2026-13': { pay: { kim: 9999 }, done: {} } };
+const SENTENCE = "Some things couldn't be used: a bill with a negative amount (counted as £0), a share rule Dovetail doesn't know, a change of style with a bad month and 1 more.";
+const errs = p => p.evaluate(() => JSON.parse(localStorage.getItem('payday.errors.v1') || '[]'));
+({ ctx, p } = await session({ native: true, storage: sampleStorage(true) }));
+let e0 = (await errs(p)).length;
+await p.click('#t-settings'); await p.click('#sBackup summary'); await p.waitForTimeout(60);
+await p.fill('#backupIn', JSON.stringify({ app: 'payday-transfers', version: 5, savedAt: '2026-10-14T09:00:00.000Z', config: broken, months: brokenMonths }));
+await p.click('#restoreBtn'); await p.waitForTimeout(80); await p.click('#restoreBtn'); await p.waitForTimeout(300);
+check('A pasted backup with things Dovetail can\'t use: "Backup restored." and one sentence saying what (three, then "and 1 more")', (await T(p, '#restoreMsg')) === 'Backup restored. ' + SENTENCE, await T(p, '#restoreMsg'));
+check('…not shown as an error', !(await p.$eval('#restoreMsg', e => e.classList.contains('err'))));
+let el1 = await errs(p);
+check('…one entry in the error log, with no names or amounts', el1.length === e0 + 1 && el1[el1.length - 1].kind === 'restore' && !/Kim|Lee|Rent|50|9999/.test(el1[el1.length - 1].msg), JSON.stringify(el1.slice(-2)));
+let cr = await LS(p, K.cfg), mr = await LS(p, K.mon);
+check('…the negative bill is kept in the data but counts as £0, and the month "2026-13" is kept', cr.bills[0].amount === 0 && cr.bills[0].badAmount === -50 && !!mr['2026-13'] && mr['2026-13'].pay.kim === 9999);
+await p.click('#t-pay'); await p.waitForTimeout(150);
+check('…and the Pay tab works it out without them', !(await T(p, '#tab-pay')).includes('9,999') && (await T(p, '#payGrid')).includes('Kim'));
+// The same file opened from another app.
+await p.evaluate(v => window.paydayNativeEvent('import', v, true), JSON.stringify({ app: 'payday-transfers', version: 5, savedAt: '2026-10-14T09:00:00.000Z', config: Object.assign({}, broken, { accounts: broken.accounts.map(a => Object.assign({}, a, { id: a.id + '2' })) }), months: brokenMonths }));
+await p.waitForTimeout(200); e0 = (await errs(p)).length;
+await p.click('#importYes'); await p.waitForTimeout(300);
+check('Opened as a file: the same sentence after "Backup restored."', (await T(p, '#toast')).startsWith('Backup restored. Some things couldn\'t be used: a bill with a negative amount'), await T(p, '#toast'));
+check('…and one entry in the error log', (await errs(p)).length === e0 + 1);
+check('No axe violations (after a restore that couldn\'t use everything)', (await axe(p)).length === 0, (await axe(p)).join(' | '));
+check('No JS errors (restore report)', p.errs.length === 0, p.errs.join(' | '));
+await ctx.close();
+// On the phone already, first open of this version: a kept backup of the data exactly as stored, then the sentence once.
+({ ctx, p } = await session({ native: true, storage: { [K.cfg]: broken, [K.mon]: brokenMonths } }));
+const kept = await p.evaluate(() => window.__qaNative.backups.filter(b => b.kept));
+check('First open of a new version with things it can\'t use: a kept backup of the data exactly as it was stored', kept.length === 1 && kept[0].json.includes('"config":' + JSON.stringify(broken) + ',"months":' + JSON.stringify(brokenMonths)) &&
+  JSON.parse(kept[0].json).app === 'payday-transfers', kept.map(k => k.json.slice(0, 120)).join(' | '));
+check('…shows the sentence', (await T(p, '#toast')) === SENTENCE, await T(p, '#toast'));
+check('…and puts one entry in the error log', (await errs(p)).length === 1 && (await errs(p))[0].kind === 'boot');
+check('…the stored settings now count the bill as £0, keeping what it was', (await LS(p, K.cfg)).bills[0].badAmount === -50);
+await p.reload(); await p.waitForTimeout(300);
+check('Opened again: said once only', !(await T(p, '#toast')).includes('couldn\'t be used') && (await errs(p)).length === 1);
+check('No JS errors (first open with a report)', p.errs.length === 0, p.errs.join(' | '));
+await ctx.close();
+// The recovery screen restoring that backup: the page reloads, then says what it couldn't use, once.
+const brokenFile = JSON.stringify({ app: 'payday-transfers', version: 5, savedAt: '2026-10-14T09:00:00.000Z', config: broken, months: brokenMonths });
+({ ctx, p } = await session({ native: true, storage: { [K.cfg]: '{"schema":5,"setupDone":true,"people":[', 'qa.native': { backups: [{ name: 'backup-20261014-090000.json', savedAt: '2026-10-14T09:00:00', json: brokenFile }], calls: [], lockOn: false, lockAvail: true, n: 0 } } }));
+await p.click('#recover_0'); await p.waitForTimeout(500);
+check('Restored from the recovery screen: once the app opens, "Backup restored." and the sentence', await p.isVisible('#tab-pay') && (await T(p, '#toast')) === 'Backup restored. ' + SENTENCE, await T(p, '#toast'));
+check('…with one entry in the error log for it', (await errs(p)).filter(e => e.kind === 'restore').length === 1, JSON.stringify(await errs(p)));
+await p.reload(); await p.waitForTimeout(300);
+check('…said once only', !(await T(p, '#toast')).includes('couldn\'t be used'));
+await ctx.close();
+
 await finish();

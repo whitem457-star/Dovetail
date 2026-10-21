@@ -50,6 +50,17 @@ jobs:
       - name: Build the page
         run: ./gradlew --no-daemon :app:generatePaydayPage
 
+      - name: The Node page builder gives the same page
+        run: |
+          # Cloud sessions and npm test build the page with tests/build-page.mjs, so it must stay byte-identical to Gradle's.
+          # It builds into a copy here, so the Gradle page stays in place.
+          mkdir -p "$RUNNER_TEMP/node-page/tests"
+          cp -r web "$RUNNER_TEMP/node-page/web"
+          cp tests/build-page.mjs "$RUNNER_TEMP/node-page/tests/"
+          node "$RUNNER_TEMP/node-page/tests/build-page.mjs"
+          cmp app/build/generated/payday-assets/index.html "$RUNNER_TEMP/node-page/app/build/generated/payday-assets/index.html" \
+            || { echo "ERROR: tests/build-page.mjs and Gradle's generatePaydayPage build different pages; keep the two in step" >&2; exit 1; }
+
       - name: Web tests
         working-directory: tests
         run: |
@@ -69,10 +80,20 @@ jobs:
           grep -q "package: name='uk.whiteboard.payday'" <<<"$BADGING" || { echo "ERROR: couldn't read the APK's manifest" >&2; exit 1; }
           grep -E "^package|uses-permission" <<<"$BADGING"
           if grep -q "android.permission.INTERNET" <<<"$BADGING"; then echo "ERROR: INTERNET permission found" >&2; exit 1; fi
+          # The owner's rule: no new permissions without asking. Anything not on this list fails the build, including one a new
+          # dependency brings in. The same list is in the signed step below, build.sh and CLAUDE.md's Rules: change all of them together.
+          ALLOWED="android.permission.POST_NOTIFICATIONS android.permission.USE_BIOMETRIC android.permission.WAKE_LOCK android.permission.RECEIVE_BOOT_COMPLETED uk.whiteboard.payday.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+          PERMS=$(sed -n "s/^uses-permission\(-sdk-23\)\{0,1\}: name='\([^']*\)'.*/\2/p" <<<"$BADGING" | sort -u)
+          EXTRA=$(comm -23 <(echo "$PERMS") <(tr ' ' '\n' <<<"$ALLOWED" | sort -u))
+          if [ -n "$EXTRA" ]; then echo "ERROR: permissions not on the allowed list (ask the owner first): $EXTRA" >&2; exit 1; fi
           AAB=app/build/outputs/bundle/release/app-release.aab
           unzip -p "$AAB" base/manifest/AndroidManifest.xml > "$RUNNER_TEMP/aab-manifest"
           grep -aq "android.permission.USE_BIOMETRIC" "$RUNNER_TEMP/aab-manifest" || { echo "ERROR: couldn't read the app bundle's manifest" >&2; exit 1; }
           if grep -aq "android.permission.INTERNET" "$RUNNER_TEMP/aab-manifest"; then echo "ERROR: INTERNET permission found in the app bundle" >&2; exit 1; fi
+          # The bundle's manifest is binary, so check every permission name in it; BIND_JOB_SERVICE and DUMP guard WorkManager's services.
+          AAB_PERMS=$(grep -aoE '[A-Za-z][A-Za-z0-9_.]*\.(permission\.[A-Z][A-Z0-9_]*|[A-Z0-9_]+_PERMISSION)' "$RUNNER_TEMP/aab-manifest" | sort -u)
+          EXTRA=$(comm -23 <(echo "$AAB_PERMS") <(printf '%s\n' $ALLOWED android.permission.BIND_JOB_SERVICE android.permission.DUMP | sort -u))
+          if [ -n "$EXTRA" ]; then echo "ERROR: permissions not on the allowed list in the app bundle: $EXTRA" >&2; exit 1; fi
 
       - name: Signed release APK and app bundle
         id: signed
@@ -93,11 +114,19 @@ jobs:
           BADGING=$("$BT/aapt2" dump badging "$APK")
           grep -q "package: name='uk.whiteboard.payday'" <<<"$BADGING" || { echo "ERROR: couldn't read the APK's manifest" >&2; exit 1; }
           if grep -q "android.permission.INTERNET" <<<"$BADGING"; then echo "ERROR: INTERNET permission found" >&2; exit 1; fi
+          # The same allowed list as the Permissions step above, build.sh and CLAUDE.md's Rules.
+          ALLOWED="android.permission.POST_NOTIFICATIONS android.permission.USE_BIOMETRIC android.permission.WAKE_LOCK android.permission.RECEIVE_BOOT_COMPLETED uk.whiteboard.payday.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+          PERMS=$(sed -n "s/^uses-permission\(-sdk-23\)\{0,1\}: name='\([^']*\)'.*/\2/p" <<<"$BADGING" | sort -u)
+          EXTRA=$(comm -23 <(echo "$PERMS") <(tr ' ' '\n' <<<"$ALLOWED" | sort -u))
+          if [ -n "$EXTRA" ]; then echo "ERROR: permissions not on the allowed list (ask the owner first): $EXTRA" >&2; exit 1; fi
           AAB_CERT=$(keytool -printcert -jarfile "$AAB" 2>/dev/null | sed -n 's/^[[:space:]]*SHA256: //p' | tr -d ':' | tr 'A-F' 'a-f')
           if [ "$AAB_CERT" != "$PAYDAY_CERT_SHA256" ]; then echo "ERROR: the app bundle is signed with a different certificate ($AAB_CERT)" >&2; exit 1; fi
           unzip -p "$AAB" base/manifest/AndroidManifest.xml > "$RUNNER_TEMP/aab-manifest"
           grep -aq "android.permission.USE_BIOMETRIC" "$RUNNER_TEMP/aab-manifest" || { echo "ERROR: couldn't read the app bundle's manifest" >&2; exit 1; }
           if grep -aq "android.permission.INTERNET" "$RUNNER_TEMP/aab-manifest"; then echo "ERROR: INTERNET permission found in the app bundle" >&2; exit 1; fi
+          AAB_PERMS=$(grep -aoE '[A-Za-z][A-Za-z0-9_.]*\.(permission\.[A-Z][A-Z0-9_]*|[A-Z0-9_]+_PERMISSION)' "$RUNNER_TEMP/aab-manifest" | sort -u)
+          EXTRA=$(comm -23 <(echo "$AAB_PERMS") <(printf '%s\n' $ALLOWED android.permission.BIND_JOB_SERVICE android.permission.DUMP | sort -u))
+          if [ -n "$EXTRA" ]; then echo "ERROR: permissions not on the allowed list in the app bundle: $EXTRA" >&2; exit 1; fi
           VERSION=$(sed -n "s/.*versionName='\([^']*\)'.*/\1/p" <<<"$BADGING")
           mkdir -p signed && cp "$APK" "signed/Dovetail-v$VERSION.apk" && cp "$AAB" "signed/Dovetail-v$VERSION.aab"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -121,4 +150,5 @@ jobs:
           path: |
             app/build/reports/
             tests/shots/
+            tests/out/
           if-no-files-found: ignore

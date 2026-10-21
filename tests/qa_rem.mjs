@@ -200,4 +200,34 @@ check('No payday: "The calendar month", December 2026 has Kestrel home and Lumen
 await goMonth(p, 'January 2027');
 check('…and January 2027 has Car 1 MOT', (await T(p, '#dueMonth')).includes('Car 1 MOT'));
 await ctx.close();
+
+// ---- 2.13: an empty reminder isn't kept ----
+({ ctx, p } = await session({ storage: sampleStorage(false) }));
+await p.click('#t-due'); await p.waitForTimeout(100);
+const nRem = async () => (await LS(p, K.cfg)).reminders.length, n0 = await nRem(), badgeR0 = await T(p, '#dueBadge');
+const closeOpen = () => p.click('#dueList .rem:has(.ed) .btn.ghost[aria-expanded=true]');
+await p.click('#remAdd'); await p.waitForTimeout(100);
+check('2.13: "+ Add a reminder" opens the editor as before, with the name focused', (await nRem()) === n0 + 1 && (await p.evaluate(() => document.activeElement.id)).startsWith('rn_'));
+await closeOpen(); await p.waitForTimeout(100);
+check('…closed untouched: it\'s gone, with no Undo message, and focus is on "+ Add a reminder"', (await nRem()) === n0 && await p.isHidden('#undoBar') && !(await T(p, '#dueList')).includes('New reminder') &&
+  (await p.evaluate(() => document.activeElement.id)) === 'remAdd');
+check('…the badge is as it was', (await T(p, '#dueBadge')) === badgeR0);
+await p.click('#remAdd'); await p.waitForTimeout(100); await p.click('#t-pay'); await p.waitForTimeout(100); await p.click('#t-due'); await p.waitForTimeout(100);
+check('…left untouched by changing tab: gone too', (await nRem()) === n0 && !(await T(p, '#dueList')).includes('New reminder'));
+await p.click('#remAdd'); await p.waitForTimeout(100);
+const nid = await p.evaluate(() => document.activeElement.id);
+await p.fill('#' + nid, 'Boiler service'); await p.waitForTimeout(600); await closeOpen(); await p.waitForTimeout(100);
+check('…one that was edited stays, and focus stays on its Edit button', (await nRem()) === n0 + 1 && (await T(p, '#dueList')).includes('Boiler service') &&
+  (await p.evaluate(() => document.activeElement.textContent)) === 'Edit');
+await p.click('#remAdd'); await p.waitForTimeout(100);
+const did = await p.$eval('#dueList .ed input[type=date]', e => e.id);
+await p.fill('#' + did, '2026-12-01'); await p.dispatchEvent('#' + did, 'change'); await p.waitForTimeout(150);
+await p.reload(); await p.waitForTimeout(250); await p.click('#t-due'); await p.waitForTimeout(100);
+check('…and so does one with only its date changed', (await nRem()) === n0 + 2);
+const names = await p.$$eval('#dueList .rem .btn', l => l.map(b => b.getAttribute('aria-label') || b.textContent));
+check('2.13: each reminder\'s buttons say which item they\'re for ("Edit Boiler service")', names.includes('Edit Boiler service') && names.every(t => t !== 'Edit' && t !== 'Done' && t !== 'Mark as renewed' && t !== 'Update renewal'), names.join(' | '));
+check('…and the name starts with the words on the button', await p.$$eval('#dueList .rem .btn', l => l.every(b => !b.getAttribute('aria-label') || b.getAttribute('aria-label').startsWith(b.textContent))));
+check('No axe violations (reminder buttons)', (await axe(p)).length === 0, (await axe(p)).join(' | '));
+check('No JS errors (empty reminder)', p.errs.length === 0, p.errs.join(' | '));
+await ctx.close();
 await finish();

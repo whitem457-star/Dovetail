@@ -1,6 +1,7 @@
 // 2.2 Pay tab changes: other income under the pay boxes, plus signs on the float cards, the "Not every month" card
 // with its link to a "Not monthly" filter in Settings › Bills, and dismissing the undo bar (×, swipe, Escape).
-import { suite, session, sampleStorage, household, K, T, LS, goMonth, swipe, centre, axe, openDetails } from './lib.mjs';
+import fs from 'fs';
+import { suite, session, sampleStorage, household, K, T, LS, goMonth, swipe, centre, axe, openDetails, noSideScroll, PAGE } from './lib.mjs';
 const { check, finish } = suite('Pay tab (2.2)');
 
 let { ctx, p } = await session({ storage: sampleStorage(true), w: 360, h: 800, touch: true });
@@ -103,6 +104,53 @@ await p.click('#su_start'); await p.click('#su_later'); await p.waitForTimeout(2
 check('A new install doesn\'t show "What\'s new"', await p.isVisible('#tab-pay') && await p.isHidden('#whatsNew'));
 await p.reload(); await p.waitForTimeout(250);
 check('…nor on its next start', await p.isHidden('#whatsNew'));
+await ctx.close();
+
+// ---------- What's new keyed by version (2.13) ----------
+// The lines and the choice of versions come from ui.js (WHATS_NEW, whatsNewVersions; unit/whatsnew.test.mjs tests the
+// choice), so these checks hold from release to release: what's on screen, in what order, under which headings.
+const VER = /var VERSION="([\d.]+)"/.exec(fs.readFileSync(PAGE, 'utf8'))[1];
+const uiSrc = fs.readFileSync(new globalThis.URL('../web/src/ui.js', import.meta.url), 'utf8');
+const calcSrc = fs.readFileSync(new globalThis.URL('../web/src/calc.js', import.meta.url), 'utf8'), vb0 = calcSrc.indexOf('function versionBefore(');
+const WN = new Function(calcSrc.slice(vb0, calcSrc.indexOf('\n', calcSrc.indexOf('\n', vb0) + 1)) + '\n' + uiSrc.slice(uiSrc.indexOf("/* What's new, by version"), uiSrc.indexOf("/* Each version's lines in a list")) + '\nreturn { WHATS_NEW, whatsNewVersions };')();
+const wnHome = from => ({ [K.cfg]: household({ lastVersion: from, payday: { day: 28, weekend: true },
+  people: [{ id: 'a', name: 'Alex', payAccount: 'x', usualPay: 2000 }], accounts: [{ id: 'x', name: 'Current', colour: 'blue', leftoverTo: null }],
+  bills: [{ id: 'b1', name: 'Rent', amount: 800, account: 'x', months: [] }] }) });
+const wnSeen = sel => p.$eval(sel, box => ({ heads: [...box.querySelectorAll('b')].map(b => b.textContent), lines: [...box.querySelectorAll('li')].map(l => l.textContent), text: box.textContent }));
+for (const from of ['2.11', '2.12']) {
+  const vs = WN.whatsNewVersions(WN.WHATS_NEW, from, VER);
+  ({ ctx, p } = await session({ storage: wnHome(from) }));
+  const seen = await wnSeen('#whatsNew');
+  check(`What's new after updating from ${from}: titled for ${VER}, then ${vs.join(' and ')}, newest first` + (vs.length > 1 ? ', each under its own heading' : ', with no heading of its own'),
+    vs[0] === VER && JSON.stringify(seen.heads) === JSON.stringify(["What's new in " + VER].concat(vs.length > 1 ? vs.map(v => 'In ' + v) : [])) &&
+    JSON.stringify(seen.lines) === JSON.stringify(vs.flatMap(v => WN.WHATS_NEW[v])), JSON.stringify(seen));
+  check('…a group named for screen readers', (await p.getAttribute('#whatsNew .banner', 'role')) === 'group' && (await p.getAttribute('#whatsNew .banner', 'aria-label')) === "What's new in Dovetail " + VER);
+  await p.click('#whatsNewOk'); await p.waitForTimeout(60);
+  check('…"Got it" closes it and puts focus on the Pay heading', await p.isHidden('#whatsNew') && (await p.evaluate(() => document.activeElement && document.activeElement.id)) === 'payH');
+  await ctx.close();
+}
+// Opened after going back to an older version: nothing to say, so no empty card.
+({ ctx, p } = await session({ storage: wnHome('9.9') }));
+check('No What\'s new card when the version last opened is newer than this one', await p.isHidden('#whatsNew') && (await LS(p, K.cfg)).lastVersion === VER);
+await ctx.close();
+// About › What changed: the last three versions with lines, newest first, each under its heading.
+({ ctx, p } = await session({ storage: wnHome(VER) }));
+check('(No What\'s new when nothing has changed)', await p.isHidden('#whatsNew'));
+await p.click('#t-settings'); await p.waitForTimeout(150); await p.click('#whatChanged summary'); await p.waitForTimeout(60);
+const last3 = WN.whatsNewVersions(WN.WHATS_NEW, null, VER).slice(0, 3), about = await wnSeen('#whatChanged');
+check('About › What changed: the last versions\' lines (' + last3.join(', ') + '), each under "In …", and where the rest are',
+  JSON.stringify(about.heads) === JSON.stringify(last3.map(v => 'In ' + v)) && JSON.stringify(about.lines) === JSON.stringify(last3.flatMap(v => WN.WHATS_NEW[v])) &&
+  about.text.includes("Earlier versions aren't listed here.") && !about.text.includes('Only this version'), JSON.stringify(about));
+check('No JS errors (What\'s new)', p.errs.length === 0, p.errs.join(' | '));
+await ctx.close();
+// The longest card (from 2.11) in dark, at 360px, with larger text.
+({ ctx, p } = await session({ storage: wnHome('2.11'), w: 360, h: 740, dark: true }));
+await p.evaluate(() => document.documentElement.setAttribute('data-text', 'large')); await p.waitForTimeout(100);
+check('What\'s new from 2.11, dark, 360px, larger text: no sideways scrolling', await noSideScroll(p, 360));
+let wnAx = await axe(p); check('Accessibility: What\'s new from 2.11 (dark, 360px, larger text)', wnAx.length === 0, wnAx.join(' | '));
+await ctx.close();
+({ ctx, p } = await session({ storage: wnHome('2.11'), w: 360, h: 740 }));
+wnAx = await axe(p); check('Accessibility: What\'s new from 2.11 (light, 360px)', wnAx.length === 0, wnAx.join(' | '));
 await ctx.close();
 
 // ---------- empty states ----------

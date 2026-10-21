@@ -8,6 +8,10 @@ const saves = st => st.calls.filter(c => c[0] === 'save').length;
 // ---------- 1. Automatic backups ----------
 let { ctx, p } = await session({ native: true, storage: sampleStorage(false) });
 await p.waitForTimeout(1800);
+// 2.13: the first open of a new version keeps the data as stored first (qa_share.mjs checks what's in it). It's taken
+// out of the stand-in here, so what follows counts the automatic backups only.
+check('The first open of this version kept a backup of the stored data first', (await NS(p)).backups.filter(b => b.kept).length === 1);
+await p.evaluate(() => { const st = window.__qaNative; st.backups = st.backups.filter(b => !b.kept); window.__qaSave(); });
 let st = await NS(p);
 check('A backup is saved shortly after opening', st.backups.length === 1 && JSON.parse(st.backups[0].json).app === 'payday-transfers', JSON.stringify(st.calls));
 const b0 = JSON.parse(st.backups[0].json);
@@ -28,6 +32,14 @@ await p.fill('#pay_sam', '2330');
 await p.evaluate(() => { Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' }); document.dispatchEvent(new Event('visibilitychange')); });
 check('Leaving the app straight after typing saves the month (no waiting on the autosave timer)', (await LS(p, K.mon))['2026-11'].pay.sam === 2330 && (JSON.parse((await NS(p)).backups[0].json).months['2026-11'] || {}).pay.sam === 2330);
 await p.evaluate(() => { Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' }); });
+// 2.13: the app calls window.paydayFlush when it's paused (MainActivity.onPause), before Android may destroy the page.
+await p.fill('#pay_sam', '2340');
+const flushed = await p.evaluate(k => { const was = JSON.parse(localStorage.getItem(k))['2026-11'].pay.sam; window.paydayFlush(); return [was, JSON.parse(localStorage.getItem(k))['2026-11'].pay.sam]; }, K.mon);
+check('2.13: the app\'s pause call saves the month typed a moment ago at once, and the backup with it', flushed[0] === 2330 && flushed[1] === 2340 &&
+  (JSON.parse((await NS(p)).backups[0].json).months['2026-11'] || {}).pay.sam === 2340, JSON.stringify(flushed));
+const nSaves = saves(await NS(p));
+await p.evaluate(() => window.paydayFlush()); await p.waitForTimeout(3000);
+check('…and with nothing waiting it saves nothing more', saves(await NS(p)) === nSaves && p.errs.length === 0, p.errs.join(' | '));
 
 // ---------- 2. Backup settings: list, restore, share ----------
 await p.evaluate(() => { const st = window.__qaNative; const j = JSON.parse(st.backups[st.backups.length - 1].json); j.config.budgets[0].amount = 650;

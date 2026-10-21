@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="page_bg">#0A110E</color>
+    <color name="splash_icon_bg">#141C18</color>
 </resources>

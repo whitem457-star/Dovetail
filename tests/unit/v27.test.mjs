@@ -95,7 +95,8 @@ test('transfersText: no payday, a top-up, two accounts that keep what\'s left, a
   assert.equal(t[1], '1. ☐ Main → Bills  £500.00 (top-up)');
   assert.deepEqual(t.slice(2), ['Left over in Main: £500.00', 'Left over in Pot: £200.00']);
   const short = P.calc(c, 3, { p: 100 }, []), s = P.transfersText(c, '2027-03', short, {}, null).split('\n');
-  assert.equal(s[2], 'Short in Main: £400.00');
+  // 2.13: a top-up sends only what Main has (£100), for every household; the rest is Bills' shortfall.
+  assert.deepEqual(s.slice(1), ['1. ☐ Main → Bills  £100.00 (top-up)', 'Left over in Main: £0.00', 'Left over in Pot: £200.00', 'Short in Bills: £400.00']);
   const none = household({ people: [{ id: 'p', name: 'Pat', payAccount: 'a' }], accounts: [{ id: 'a', name: 'Main' }] });
   assert.deepEqual(P.transfersText(none, '2027-03', P.calc(none, 3, { p: 10 }, []), {}, null).split('\n').slice(1),
     ['No transfers needed this month.', 'Left over this month: £10.00 in Main']);

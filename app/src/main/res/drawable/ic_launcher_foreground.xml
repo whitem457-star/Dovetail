@@ -1,11 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Drawn inside the 66dp safe zone of the 108dp canvas. -->
+<!-- The Dovetail mark (2.11): money coming in, brought together, sent on. Two streams in the Analysis chart colours
+     (blue viz-1, amber viz-4) meet side by side, each clipped to its half so neither is drawn over the other, and
+     hand over to a green arrow (viz-3) across a hairline gap. Inside the 66dp safe zone of the 108dp canvas.
+     The same path data is in ic_launcher_monochrome.xml, ic_stat_payday.xml, splash_mark.xml (light and night) and
+     MARK in web/src/ui.js; tests/unit/mark.test.mjs checks they match. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
-    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="7"
-        android:strokeLineCap="round" android:strokeLineJoin="round"
-        android:pathData="M60.5,36.5C59,31 54.5,28 49.5,28C43.5,28 39.5,32.5 39.5,38.5L39.5,58C39.5,63 37.5,66.5 33.5,69L59,69M32,49.5L52.5,49.5" />
-    <path android:fillColor="#00000000" android:strokeColor="#FFA6E8CC" android:strokeWidth="7"
-        android:strokeLineCap="round" android:strokeLineJoin="round"
-        android:pathData="M59,69L78,69M71,62L78,69L71,76" />
+    <group>
+        <clip-path android:pathData="M0,0H54V54.1H0Z" />
+        <path android:fillColor="#00000000" android:strokeColor="#FF2A78D6" android:strokeWidth="7"
+            android:strokeLineCap="round" android:strokeLineJoin="round"
+            android:pathData="M39,33C39,46.64 54,44 54,55V59" />
+    </group>
+    <group>
+        <clip-path android:pathData="M54,0H108V54.1H54Z" />
+        <path android:fillColor="#00000000" android:strokeColor="#FFEDA100" android:strokeWidth="7"
+            android:strokeLineCap="round" android:strokeLineJoin="round"
+            android:pathData="M69,33C69,46.64 54,44 54,55V59" />
+    </group>
+    <path android:fillColor="#00000000" android:strokeColor="#FF1BAF7A" android:strokeWidth="7"
+        android:strokeLineCap="butt" android:pathData="M54,55.9V75" />
+    <path android:fillColor="#00000000" android:strokeColor="#FF1BAF7A" android:strokeWidth="7"
+        android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M45.5,66.5L54,75L62.5,66.5" />
 </vector>

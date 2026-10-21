@@ -8,8 +8,13 @@
   },
   "scripts": {
     "build-page": "node build-page.mjs",
-    "test": "npm run unit && npm run page",
+    "pretest": "node build-page.mjs",
+    "test": "npm run unit && npm run sim && npm run page",
     "unit": "node --test unit/*.test.mjs",
-    "page": "node qa_pay.mjs && node qa_household.mjs && node qa_oneoff.mjs && node qa_setup.mjs && node qa_rem.mjs && node qa_bridge.mjs && node qa_analysis.mjs && node qa_quality.mjs && node qa_ui.mjs && node qa_pay22.mjs && node qa_look.mjs && node qa_share.mjs && node qa_notify.mjs && node qa_twocopies.mjs && node qa_style.mjs && node qa_tour.mjs && node qa_v27.mjs && node qa_recovery.mjs && node qa_update.mjs && node qa_month.mjs"
+    "sim": "node sim/logic.mjs 5000 && node sim/stress.mjs 40 && node sim/history.mjs 300",
+    "sim:full": "node sim/logic.mjs 20000 && node sim/stress.mjs 150 && node sim/history.mjs 3000",
+    "sim:ui": "node sim/ui.mjs 360 && node sim/analyse.mjs",
+    "page": "node run-page.mjs",
+    "page:serial": "node qa_pay.mjs && node qa_household.mjs && node qa_oneoff.mjs && node qa_setup.mjs && node qa_rem.mjs && node qa_bridge.mjs && node qa_analysis.mjs && node qa_quality.mjs && node qa_ui.mjs && node qa_pay22.mjs && node qa_look.mjs && node qa_share.mjs && node qa_notify.mjs && node qa_twocopies.mjs && node qa_style.mjs && node qa_tour.mjs && node qa_v27.mjs && node qa_recovery.mjs && node qa_update.mjs && node qa_month.mjs && node qa_mark.mjs && node qa_money.mjs && node qa_fixes.mjs"
   }
 }

@@ -1,6 +1,6 @@
 // Pay tab behaviour on our upgraded household (ported from the 1.1 and 1.3 suites): typing pay, estimates,
 // ticks, months and irregular bills, history, editing bills in Settings, back button and the payday setting.
-import { suite, session, sampleStorage, K, T, LS, amts, float, typeIn, goMonth } from './lib.mjs';
+import { suite, session, sampleStorage, K, T, LS, amts, float, typeIn, goMonth, axe } from './lib.mjs';
 const { check, finish } = suite('Pay tab');
 
 let { ctx, p } = await session({ storage: sampleStorage(false) });
@@ -32,7 +32,14 @@ await typeIn(p, '#pay_sam', '2320');
 const changed = await p.$eval('#steps li:nth-child(2)', e => e.querySelector('.changed')?.textContent || '');
 check('Changing pay after ticking warns that the amount changed', changed.includes('£2,269.25') && changed.includes('£2,279.25'), changed);
 for (const i of [1, 3, 4, 5]) await p.click(`#steps li:nth-child(${i}) .tick`);
-check('All-done banner after ticking all five', (await T(p, '#warnings')).includes('All transfers done'));
+// 2.13: "done" means settled: the second transfer was ticked at £2,269.25 and is now £2,279.25.
+check('2.13: all five ticked with £10.00 still to send: not "all done" (banner and ring), and says how much', (await T(p, '#unsettled')) === 'All ticked, but £10.00 is still to send.' && !(await T(p, '#warnings')).includes('All transfers done') &&
+  (await T(p, '#hero .ring .rt')).replace(/\s+/g, '') === '5/5ticked' && (await p.getAttribute('#hero .ring', 'aria-label')) === '5 of 5 transfers ticked, 1 with a difference to send', await T(p, '#warnings'));
+await p.evaluate(() => Object.defineProperty(navigator, 'share', { configurable: true, value: o => { window.qaShared = o.text; return Promise.resolve(); } }));
+await p.click('#shareTransfers'); await p.waitForTimeout(80);
+check('…the Share text is as before ("£10.00 more to send")', String(await p.evaluate(() => window.qaShared)).includes('£10.00 more to send'), await p.evaluate(() => window.qaShared));
+await p.click('#steps li:nth-child(2) .tick'); await p.click('#steps li:nth-child(2) .tick');
+check('All-done banner once it\'s ticked again at the new amount', (await T(p, '#warnings')).includes('All transfers done') && (await p.$('#unsettled')) === null && (await T(p, '#hero .ring .rt')).replace(/\s+/g, '') === '5/5done');
 await p.click('#steps li:nth-child(5) .tick');
 check('Untick works', (await T(p, '#progressText')) === '4 of 5 done');
 await p.click('#steps li:nth-child(1) .copy'); await p.waitForTimeout(250);
@@ -123,5 +130,18 @@ check('Unticking the weekend rule keeps Sat 31 Oct', (await T(p, '#setPayday')).
 await p.selectOption('#pay_day', 'last'); await p.waitForTimeout(100);
 check('Last working day option (Oct 2026 → Fri 30 Oct)', (await T(p, '#setPayday')).includes('Fri 30 Oct 2026') && !(await p.$('#pay_wk')));
 check('No JS errors (part 2)', p.errs.length === 0, p.errs.join(' | '));
+await ctx.close();
+
+// 2.13: the phone's "done" tap only when every transfer is settled.
+({ ctx, p } = await session({ native: true, storage: sampleStorage(false) }));
+const lastTap = () => p.evaluate(() => window.__qaNative.calls.filter(c => c[0] === 'haptic').pop()[1]);
+await typeIn(p, '#pay_alex', '2280'); await typeIn(p, '#pay_sam', '2140');
+await p.click('#steps li:nth-child(1) .tick'); await typeIn(p, '#pay_alex', '2400');
+for (const i of [2, 3, 4, 5]) await p.click(`#steps li:nth-child(${i}) .tick`);
+check('2.13: the last tick with a difference still to send gives an ordinary tap, not "done"', (await lastTap()) === 'tick' && await p.isVisible('#unsettled'));
+check('No axe violations (a difference still to send)', (await axe(p)).length === 0, (await axe(p)).join(' | '));
+await p.click('#steps li:nth-child(1) .tick'); await p.click('#steps li:nth-child(1) .tick');
+check('…ticked again at the new amount: "done"', (await lastTap()) === 'done' && (await T(p, '#warnings')).includes('All transfers done'));
+check('No JS errors (settled)', p.errs.length === 0, p.errs.join(' | '));
 await ctx.close();
 await finish();

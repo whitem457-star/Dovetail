@@ -1,6 +1,6 @@
 # Dovetail privacy policy
 
-Effective 19 October 2026.
+Effective 21 October 2026.
 
 Dovetail is a free Android app that works out the money transfers a household makes between its bank accounts each payday. It is made by Marcus White, one person, and it is free software (GNU GPL, version 3 or later).
 
@@ -19,7 +19,7 @@ Dovetail collects nothing. It has no internet access, so it can't send anything 
 Dovetail can't connect to the internet. Things leave your phone only when you tap a button that hands them to another app you pick:
 
 - **Share backup file**, **Share for analysis** and **Share spreadsheet**: the file goes to the app you choose (for example email, messages or Files).
-- **Share** on the Pay tab: the month's transfers as text, with an update file to open on another phone, to the app you choose. The update file is a whole backup, so it holds all your figures. With the example household, only the text is sent.
+- **Share** on the Pay tab: you choose to send the month's transfers as a message, or an update file to open on another phone (with the transfers as its message), to the app you choose. The update file is a whole backup, so it holds all your figures. With the example household, only the message is sent.
 - **Send feedback**: opens your email app with a message to us. It includes the app's version, your phone's Android and WebView versions and screen size, how many people, accounts, bills and months you have, and any recent error messages from the app, but **never your names or amounts**. You see the whole message and can change it before you send it.
 
 What happens to anything you share is up to you and the app you share it with.

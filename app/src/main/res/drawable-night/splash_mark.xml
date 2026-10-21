@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dark: the charts' dark-theme colours on the dark circle (2.11).
+     The launch screen's mark, in its starting state (nothing drawn yet): splash_mark_anim.xml draws it in. Same paths as
+     ic_launcher_foreground.xml, with the arrowhead in two halves so it can open out from its tip. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <group>
+        <clip-path android:pathData="M0,0H54V54.1H0Z" />
+        <path android:name="a" android:fillColor="#00000000" android:strokeColor="#FF3987E5" android:strokeWidth="7"
+            android:strokeLineCap="round" android:strokeLineJoin="round" android:trimPathEnd="0"
+            android:pathData="M39,33C39,46.64 54,44 54,55V59" />
+    </group>
+    <group>
+        <clip-path android:pathData="M54,0H108V54.1H54Z" />
+        <path android:name="b" android:fillColor="#00000000" android:strokeColor="#FFC98500" android:strokeWidth="7"
+            android:strokeLineCap="round" android:strokeLineJoin="round" android:trimPathEnd="0"
+            android:pathData="M69,33C69,46.64 54,44 54,55V59" />
+    </group>
+    <path android:name="shaft" android:fillColor="#00000000" android:strokeColor="#FF199E70" android:strokeWidth="7"
+        android:strokeLineCap="butt" android:trimPathEnd="0" android:pathData="M54,55.9V75" />
+    <path android:name="headL" android:fillColor="#00000000" android:strokeColor="#FF199E70" android:strokeWidth="7"
+        android:strokeLineCap="round" android:trimPathEnd="0" android:pathData="M54,75L45.5,66.5" />
+    <path android:name="headR" android:fillColor="#00000000" android:strokeColor="#FF199E70" android:strokeWidth="7"
+        android:strokeLineCap="round" android:trimPathEnd="0" android:pathData="M54,75L62.5,66.5" />
+</vector>

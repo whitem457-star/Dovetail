@@ -11,7 +11,7 @@ Thanks for your interest. Dovetail is a small, offline Android app with a few fi
 ## The rules
 
 - **No internet, ever.** The app has no INTERNET permission and makes no network calls: no analytics, no crash reporting, no remote fonts or CDNs. The build fails if the permission appears.
-- **No new permissions** without discussing it first in an issue. Never camera, storage, contacts, location, network state or exact alarms.
+- **No new permissions** without discussing it first in an issue. Never camera, storage, contacts, location, network state or exact alarms. The build fails on any permission that isn't on the allowed list in `build.sh` and the CI workflow.
 - **No JavaScript libraries.** The page is plain JavaScript; charts are inline SVG. New Android dependencies need discussing first.
 - **Calculations never change by accident.** Changes to how transfers or left over are worked out need a clear reason and tests that show exactly what changes.
 - **Data is never lost.** Saved data and backups must keep opening in every later version. New settings are optional, with defaults.
@@ -23,7 +23,7 @@ Never put real financial details in an issue, a pull request, a screenshot or a 
 
 ## Building and testing
 
-- **Page tests (any computer with Node 18+):** `node tests/build-page.mjs`, then `cd tests && npm install && npm test`.
+- **Page tests (any computer with Node 18+):** `cd tests && npm install && npx playwright install chromium && npm test` (it builds the page first; run `node tests/build-page.mjs` yourself before running one suite with `node qa_x.mjs`).
 - **Android tests and lint (Android SDK, JDK 21):** `./gradlew :app:testReleaseUnitTest :app:lintRelease :app:assembleRelease :app:bundleRelease`.
 - `README.md` explains the data model, the calculation and every feature.
 

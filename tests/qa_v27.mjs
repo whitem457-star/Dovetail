@@ -144,8 +144,8 @@ await p.click('#t-settings'); await p.waitForTimeout(150);
 const so = await p.$$eval('#tab-settings > details, #tab-settings > section', l => l.map(e => e.id || e.querySelector('h2').textContent));
 check('Settings order: … Payday, Appearance, Reminders & notifications, App lock, Backup, Help, About',
   JSON.stringify(so) === JSON.stringify(['sPeople', 'sAccounts', 'sBills', 'sIncome', 'sBudget', 'sSavings', 'sPayday', 'sLook', 'sNotify', 'sLock', 'sBackup', 'sHelp', 'About']), so.join(','));
-check('About › What changed: closed, this version and its What\'s new lines', !(await p.$eval('#whatChanged', d => d.open)) &&
-  await p.$eval('#whatChanged', d => d.textContent.includes('In version 2.10.1:') && d.querySelectorAll('li').length === 3) && await p.isVisible('#copyDetails'));
+check('About › What changed: closed, the last three versions\' What\'s new lines under their headings (2.13, 2.12.1, then 2.12)', !(await p.$eval('#whatChanged', d => d.open)) &&
+  await p.$eval('#whatChanged', d => [...d.querySelectorAll('b')].map(b => b.textContent).join('|') === 'In 2.13|In 2.12.1|In 2.12' && d.querySelectorAll('li').length === 9 && d.textContent.includes("Earlier versions aren't listed here.")) &&await p.isVisible('#copyDetails'));
 // J3: a monthly subscription's renewal reminder defaults to a week before.
 await p.click('#sBills summary'); await p.waitForTimeout(80);
 await p.click('#bill_x11 > button'); await p.waitForTimeout(80);

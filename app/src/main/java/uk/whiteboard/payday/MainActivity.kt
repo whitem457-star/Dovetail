@@ -1,5 +1,6 @@
 package uk.whiteboard.payday
 
+import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.ClipData
@@ -13,6 +14,8 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.View
+import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.view.WindowManager
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceRequest
@@ -28,6 +31,7 @@ import android.content.res.Configuration
 import android.os.Build
 import android.graphics.Color
 import androidx.core.graphics.drawable.toDrawable
+import androidx.annotation.RequiresApi
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
@@ -43,6 +47,7 @@ import androidx.core.content.edit
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.isVisible
 import androidx.fragment.app.FragmentActivity
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -53,6 +58,9 @@ import java.util.concurrent.Executors
 class MainActivity : FragmentActivity(), NativeBridge.Host {
 
     lateinit var web: WebView
+        private set
+    /** True while [web] can't be used: from a renderer crash until its replacement is in place, and after onDestroy. */
+    internal var webGone = false
         private set
     private lateinit var root: FrameLayout
     private lateinit var cover: View
@@ -89,7 +97,6 @@ class MainActivity : FragmentActivity(), NativeBridge.Host {
         } else notifyPage("notify", false, false)
     }
 
-    @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         applyEdgeToEdge()
         super.onCreate(savedInstanceState)
@@ -107,15 +114,7 @@ class MainActivity : FragmentActivity(), NativeBridge.Host {
         if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) WebView.setWebContentsDebuggingEnabled(true)
 
         root = FrameLayout(this)
-        web = WebView(this)
-        web.settings.apply {
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            allowFileAccess = false      // the bundled page loads from assets, which doesn't need file access
-            allowContentAccess = false
-        }
-        web.webViewClient = PaydayWebViewClient()
-        web.addJavascriptInterface(NativeBridge(this, BackupStore(File(filesDir, BACKUP_DIR))), "PaydayNative")
+        web = newWebView()
         root.addView(web, FrameLayout.LayoutParams(-1, -1))
         cover = buildLockCover()
         root.addView(cover, FrameLayout.LayoutParams(-1, -1))
@@ -148,6 +147,7 @@ class MainActivity : FragmentActivity(), NativeBridge.Host {
 
         // Same URL as 1.0-1.3, so the page keeps the same storage origin and all saved data.
         if (savedInstanceState == null || web.restoreState(savedInstanceState) == null) web.loadUrl(START_URL)
+        if (savedInstanceState == null && Build.VERSION.SDK_INT >= 31) holdSplash()
         // Opened with a backup file (tapped in WhatsApp, Files or email, or shared to Dovetail), or from a notification?
         if (savedInstanceState == null) handleIncoming(intent)
     }
@@ -162,7 +162,7 @@ class MainActivity : FragmentActivity(), NativeBridge.Host {
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        if (finishedAsDuplicate) return
+        if (finishedAsDuplicate || webGone) return
         web.saveState(outState)
     }
 
@@ -191,9 +191,30 @@ class MainActivity : FragmentActivity(), NativeBridge.Host {
         } else showCover(false)
     }
 
+    /**
+     * Ask the page to save what it's still holding on a timer (pay typed in the last 0.7 s, the automatic backup, the
+     * reminder schedule) while it can: onDestroy can follow soon after (Back on Android 10 and 11, a dark-mode switch),
+     * and destroying the WebView drops its timers. Nothing is sent before the page has loaded or once the WebView is gone.
+     */
+    override fun onPause() {
+        super.onPause()
+        if (finishedAsDuplicate || !this::web.isInitialized || webGone || !pageReady) return
+        web.evaluateJavascript(FLUSH_JS, null)
+    }
+
     override fun onStop() {
         super.onStop()
         stoppedAt = SystemClock.elapsedRealtime()
+    }
+
+    /** Release the WebView with the screen (taken out of the layout first, as Android asks), rather than leaving it to be collected. */
+    override fun onDestroy() {
+        if (this::web.isInitialized && !webGone) {
+            webGone = true
+            (web.parent as? ViewGroup)?.removeView(web)
+            web.destroy()
+        }
+        super.onDestroy()
     }
 
     // ---------------- NativeBridge.Host ----------------
@@ -411,6 +432,28 @@ class MainActivity : FragmentActivity(), NativeBridge.Host {
         applyThemeColours()
     }
 
+    /**
+     * Android 12+ launch screen (2.11): it would go as soon as the first frame is drawn, which is an empty page while
+     * the WebView loads, and cut the mark's animation short. So the first frame waits until the animation has played and
+     * the page has loaded ([splashDone]), then the launch screen fades into the page. Never while the app lock is up.
+     */
+    @RequiresApi(31)
+    private fun holdSplash() {
+        val start = SystemClock.uptimeMillis()
+        // A backup file handed over from another app may get a launch screen without the mark, so only the page is waited for.
+        val animate = ValueAnimator.areAnimatorsEnabled() && !intent.hasExtra(EXTRA_IMPORT)
+        root.viewTreeObserver.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                if (!splashDone(SystemClock.uptimeMillis() - start, pageReady, lockEnabled() && !unlocked, animate)) return false
+                root.viewTreeObserver.removeOnPreDrawListener(this)
+                return true
+            }
+        })
+        splashScreen.setOnExitAnimationListener { v ->
+            v.animate().alpha(0f).setDuration(if (animate) SPLASH_FADE_MS else 0L).withEndAction { v.remove() }.start()
+        }
+    }
+
     /** Status and navigation bars: transparent, with light or dark icons to match the app's theme, not just the phone's. */
     private fun applyEdgeToEdge() {
         enableEdgeToEdge(
@@ -510,12 +553,48 @@ class MainActivity : FragmentActivity(), NativeBridge.Host {
         }
     }
 
+    /** The page's WebView, made the same way at start and after a renderer crash ([replaceCrashedWebView]). */
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun newWebView(): WebView = WebView(this).apply {
+        settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            allowFileAccess = false      // the bundled page loads from assets, which doesn't need file access
+            allowContentAccess = false
+        }
+        webViewClient = PaydayWebViewClient()
+        addJavascriptInterface(NativeBridge(this@MainActivity, BackupStore(File(filesDir, BACKUP_DIR))), "PaydayNative")
+    }
+
+    /**
+     * The renderer crashed or was killed for memory. Android says that WebView can't be used again, so take it out,
+     * destroy it and load the page afresh in a new one. The figures are in localStorage, which lives in the app, not the
+     * renderer, so only typing not yet saved is lost. The new WebView goes under the lock cover, as in onCreate, and
+     * picks up the lock and theme; Back, the insets padding (on [root]) and the splash hold all read [web] or [root]
+     * when they run, so nothing keeps the dead one.
+     */
+    private fun replaceCrashedWebView(dead: WebView) {
+        webGone = true
+        pageReady = false               // messages for the page wait in pendingJs until the new page has loaded
+        root.removeView(dead)
+        dead.destroy()
+        if (isFinishing || isDestroyed) return
+        web = newWebView()
+        root.addView(web, 0, FrameLayout.LayoutParams(-1, -1))
+        webGone = false
+        applyThemeColours()
+        showCover(cover.isVisible)
+        web.loadUrl(START_URL)
+    }
+
     private inner class PaydayWebViewClient : WebViewClient() {
         override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+            if (view !== web) return    // a replaced WebView's page doesn't count
             pageReady = false
         }
 
         override fun onPageFinished(view: WebView, url: String?) {
+            if (view !== web) return
             pageReady = true
             val waiting = pendingJs.toList()
             pendingJs.clear()
@@ -526,15 +605,17 @@ class MainActivity : FragmentActivity(), NativeBridge.Host {
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
             !request.url.toString().startsWith(ASSET_PREFIX)
 
-        // If the WebView's renderer crashes or is killed for memory, rebuild the screen instead of crashing.
+        // If the WebView's renderer crashes or is killed for memory, carry on in a new WebView instead of crashing.
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
-            recreate()
+            if (view === web && !webGone) replaceCrashedWebView(view)
             return true
         }
     }
 
     companion object {
         const val START_URL = "file:///android_asset/index.html"
+        /** The page's own save-everything-now call (window.paydayFlush in ui.js), sent from onPause. */
+        const val FLUSH_JS = "window.paydayFlush&&window.paydayFlush()"
         const val ASSET_PREFIX = "file:///android_asset/"
         const val PREFS = "payday"
         const val KEY_LOCK = "app_lock"
@@ -548,6 +629,20 @@ class MainActivity : FragmentActivity(), NativeBridge.Host {
             "untick" -> HapticFeedbackConstants.CLOCK_TICK
             else -> HapticFeedbackConstants.CONTEXT_CLICK
         }
+
+        /** The launch screen's animation is 620 ms from when the launch screen appears, a little before onCreate. */
+        const val SPLASH_MIN_MS = 700L
+        /** The longest the first frame waits for the page, so a slow start never looks stuck. */
+        const val SPLASH_MAX_MS = 1500L
+        const val SPLASH_FADE_MS = 200L
+
+        /**
+         * Whether the launch screen can go, [elapsed] ms after onCreate: at once while the app lock is up (the unlock
+         * prompt comes first); otherwise once the page has loaded and, unless animations are off, the mark has finished
+         * drawing; and in any case after [SPLASH_MAX_MS].
+         */
+        fun splashDone(elapsed: Long, pageReady: Boolean, locked: Boolean, animate: Boolean): Boolean =
+            locked || elapsed >= SPLASH_MAX_MS || (pageReady && elapsed >= (if (animate) SPLASH_MIN_MS else 0L))
 
         fun normalTheme(t: String?): String = if (t == "light" || t == "dark") t else THEME_SYSTEM
 

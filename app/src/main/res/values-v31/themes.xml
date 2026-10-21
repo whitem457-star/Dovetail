@@ -1,12 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Android 12+ launch screen: the page background, and the icon's mark on its green circle. -->
+    <!-- Android 12+ launch screen: the page background, and the Dovetail mark drawing itself in on a circle in the card
+         colour (2.11). MainActivity keeps it up until the animation has played and the page is ready, then fades it. -->
     <style name="AppTheme" parent="@android:style/Theme.DeviceDefault.DayNight">
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowActionBar">false</item>
         <item name="android:windowBackground">@color/page_bg</item>
         <item name="android:windowSplashScreenBackground">@color/page_bg</item>
-        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
-        <item name="android:windowSplashScreenIconBackgroundColor">@color/brand</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_mark_anim</item>
+        <item name="android:windowSplashScreenAnimationDuration">620</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/splash_icon_bg</item>
     </style>
 </resources>

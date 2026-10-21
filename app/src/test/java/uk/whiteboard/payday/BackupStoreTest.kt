@@ -14,7 +14,9 @@ import org.robolectric.RobolectricTestRunner
 import java.io.File
 import java.time.Clock
 import java.time.Instant
+import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.YearMonth
 import java.time.ZoneId
 import java.time.ZoneOffset
 
@@ -87,11 +89,54 @@ class BackupStoreTest {
         store.prune()
         val names = store.list().map { it.name }
         val days = store.list().map { it.savedAt.toLocalDate() }.toSet()
-        // 10 newest = last 3 days' 9 changes + 1 from the day before; then one per day back to 14 days.
-        assertEquals(10 + (14 - 4), names.size)
-        assertEquals(14, days.size)
+        // 10 newest = last 3 days' 9 changes + 1 from the day before; then one per day back to 14 days; then September's
+        // newest (the month's last day) for the monthly rule.
+        assertEquals(10 + (14 - 4) + 1, names.size)
+        assertEquals(15, days.size)
         assertTrue("the newest is always kept", names.first().startsWith("backup-20261014-16"))
-        assertTrue("nothing older than 14 days", days.all { !it.isBefore(clock.now.toLocalDate().minusDays(13)) })
+        assertEquals("before the 14 days, only September's newest", listOf("backup-20260930-160000.json"),
+            store.list().filter { it.savedAt.toLocalDate().isBefore(clock.now.toLocalDate().minusDays(13)) }.map { it.name })
+    }
+
+    @Test fun keepsTheNewestOfEachMonthForTwelveMonths() {
+        val clock = TestClock(LocalDateTime.of(2025, 6, 1, 8, 0, 0))
+        val store = BackupStore(File(tmp.root, "b"), clock)
+        var food = 0
+        // Every day for 16 months, two changes a day (June 2025 to September 2026).
+        while (clock.now.isBefore(LocalDateTime.of(2026, 10, 1, 0, 0))) {
+            clock.now = clock.now.withHour(8); store.save(backup(food++))
+            clock.now = clock.now.withHour(20); store.save(backup(food++))
+            clock.now = clock.now.plusDays(1).withHour(8)
+        }
+        clock.now = LocalDateTime.of(2026, 9, 30, 21, 0)
+        store.prune()
+        val list = store.list()
+        val olderThanDays = list.filter { it.savedAt.toLocalDate().isBefore(LocalDate.of(2026, 9, 17)) }.map { it.name }.sorted()
+        // October 2025 to August 2026: each month's last backup (the evening of its last day). September is covered by
+        // the daily rule; May 2025 and earlier are more than 12 months back.
+        val expected = (0L until 11L).map { YearMonth.of(2025, 10).plusMonths(it) }.map { "backup-" + it.atEndOfMonth().toString().replace("-", "") + "-200000.json" }
+        assertEquals(expected, olderThanDays)
+        assertFalse("nothing from before the 12 months", list.any { it.savedAt.isBefore(LocalDateTime.of(2025, 10, 1, 0, 0)) })
+        // A month later the oldest goes.
+        clock.now = LocalDateTime.of(2026, 10, 15, 9, 0); store.save(backup(food++))
+        assertFalse(store.list().any { YearMonth.from(it.savedAt) == YearMonth.of(2025, 10) })
+        assertTrue(store.list().any { YearMonth.from(it.savedAt) == YearMonth.of(2025, 11) })
+    }
+
+    @Test fun upToTwentyKeptBackupsSurviveForThirtyDays() {
+        val clock = TestClock(LocalDateTime.of(2026, 10, 1, 9, 0, 0))
+        val store = BackupStore(File(tmp.root, "b"), clock)
+        val kept = mutableListOf<String>()
+        // A kept backup every day for 25 days, each followed by many ordinary changes.
+        var food = 0
+        repeat(25) {
+            clock.now = clock.now.withHour(9); kept += store.save(backup(food++), keep = true)!!
+            repeat(12) { i -> clock.now = clock.now.withHour(10).plusMinutes(i.toLong()); store.save(backup(food++)) }
+            clock.now = clock.now.plusDays(1)
+        }
+        val left = store.list().filter { it.kept }.map { it.name }
+        assertEquals("the 20 newest kept backups are all there, and only those (the five oldest have gone)", kept.takeLast(20).sorted(), left.sorted())
+        assertEquals(BackupStore.KEEP_PINNED_MAX, 20)
     }
 
     @Test fun listJsonDescribesEachBackup() {

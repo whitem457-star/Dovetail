@@ -3,30 +3,44 @@
    is ever asked for. c = settings, months = saved months, k = the budget month on screen, today = "YYYY-MM-DD". */
 
 /* Months the household actually used (typed pay or ticked a transfer), oldest first, up to and including k. */
-function usedMonths(months,upTo){return Object.keys(months).filter(function(x){var d=months[x];if(!d||typeof d!=="object"||!/^\d{4}-\d{2}$/.test(x)||x>upTo)return false;
+function usedMonths(months,upTo){return Object.keys(months).filter(function(x){var d=months[x];if(!d||typeof d!=="object"||!validMonth(x)||x>upTo)return false;
   var pay=d.pay&&Object.keys(d.pay).some(function(p){return payIsTyped(d,p)}),done=d.done&&Object.keys(d.done).some(function(s){return d.done[s]!=null&&d.done[s]!==false});
   return pay||done}).sort()}
-function typedPayMonths(months,upTo){return Object.keys(months).filter(function(x){return /^\d{4}-\d{2}$/.test(x)&&x<=upTo&&hasTypedPay(months,x)}).sort()}
+function typedPayMonths(months,upTo){return Object.keys(months).filter(function(x){return validMonth(x)&&x<=upTo&&hasTypedPay(months,x)}).sort()}
 function nextMonths(k,n){var out=[];for(var i=0;i<n;i++)out.push(shiftMonth(k,i));return out}
 function sum(list,f){return list.reduce(function(t,x){return t+(f?f(x):x)},0)}
 
 /* Typical monthly income: each person's average typed pay over their last 6 typed months up to k (or usual pay),
    plus regular other income. One-offs are left out: they aren't typical, and nor is estimated pay (payIsTyped). */
 function avgIncome(c,months,k){
-  var people=c.people.map(function(p){var keys=Object.keys(months).filter(function(x){return x<=k&&payIsTyped(months[x],p.id)}).sort().slice(-6);
+  // 2.12.1: a boarder's pay is their own: their board counts instead, as the transfers work it out for month k with
+  // everyone's typical pay (a set amount, a share of their pay, or a share by the account's rule).
+  var mc=cfgFor(c,k),out=boarderAccounts(mc),home=function(id){return !out[id]};
+  var avgOf=function(p){var keys=Object.keys(months).filter(function(x){return x<=k&&validMonth(x)&&payIsTyped(months[x],p.id)}).sort().slice(-6);
     if(keys.length)return {id:p.id,name:p.name,avg:sum(keys,function(x){return num(months[x].pay[p.id])})/keys.length,months:keys.length};
-    return {id:p.id,name:p.name,avg:num(p.usualPay),months:0}});
-  var other=sum(c.income,function(i){return num(i.amount)});
-  return {people:people,other:other,total:sum(people,function(p){return p.avg})+other}}
+    return {id:p.id,name:p.name,avg:num(p.usualPay),months:0}};
+  var all=mc.people.map(avgOf),people=all.filter(function(x,i){return home(mc.people[i].payAccount)}),board=0,pay={};all.forEach(function(x){pay[x.id]=x.avg});
+  if(Object.keys(out).length)board=calc(mc,mNum(k),pay,[]).t.board;
+  var other=sum(c.income.filter(function(i){return home(i.account)}),function(i){return num(i.amount)});
+  // pay (2.13): everyone's typical pay, boarders too, for working out a typical month account by account.
+  return {people:people,other:other,board:board,total:sum(people,function(p){return p.avg})+other+board,pay:pay}}
 
-/* 1. The average month: income → bills → spending budgets → savings → float. Irregular bills are spread over the year. */
+/* 1. The average month: income → bills → spending budgets → savings → float. Irregular bills are spread over the year.
+   A boarder's own account (2.12.1) is left out: their board is income. */
 function monthlyPicture(c,months,k){
-  var inc=avgIncome(c,months,k),bills=0,billSavings=0;
-  c.bills.forEach(function(b){if(b.savings)billSavings+=monthlyEquivalent(b);else bills+=monthlyEquivalent(b)});
-  var budgets=sum(c.budgets,function(b){return num(b.amount)}),transfers=sum(c.savings,function(s){return num(s.amount)}),saving=transfers+billSavings;
+  var inc=avgIncome(c,months,k),bills=0,billSavings=0,out=boarderAccounts(cfgFor(c,k)),home=function(x){return !out[x.account||x.fromAccount]};
+  c.bills.filter(home).forEach(function(b){if(b.savings)billSavings+=monthlyEquivalent(b);else bills+=monthlyEquivalent(b)});
+  var budgets=sum(c.budgets.filter(home),function(b){return num(b.amount)}),transfers=sum(c.savings.filter(home),function(s){return num(s.amount)}),saving=transfers+billSavings;
   var flt=inc.total-bills-budgets-saving,I=inc.total;
   return {income:I,incomeDetail:inc,bills:bills,budgets:budgets,saving:saving,savingTransfers:transfers,savingBills:billSavings,float:flt,
-    savingsRate:I>0?saving/I:null,committed:I>0?bills/I:null,discretionary:budgets+flt,discretionaryShare:I>0?(budgets+flt)/I:null}}
+    savingsRate:I>0?saving/I:null,committed:I>0?bills/I:null,discretionary:budgets+flt,discretionaryShare:I>0?(budgets+flt)/I:null,shortBy:averageShort(c,k,inc.pay)}}
+/* 2.13: the accounts short in the average month, so a shortfall isn't hidden in the average left over: what each account
+   that keeps what's left has over the 12 months from k (month k's arrangement, typical pay, no one-offs), averaged.
+   [{id, amount}]; empty when one account keeps what's left (its shortfall is the average left over itself). A top-up's
+   shortfall (a float marked short) isn't an account that keeps what's left, so it doesn't count here. */
+function averageShort(c,k,pay){var mc=cfgFor(c,k),acc={},ids=[];
+  nextMonths(k,12).forEach(function(x){calc(mc,mNum(x),pay,[]).floats.forEach(function(f){if(f.short)return;if(acc[f.id]==null){acc[f.id]=0;ids.push(f.id)}acc[f.id]+=f.amt/12})});
+  return ids.length>1?shortAccounts({floats:ids.map(function(id){return {id:id,amt:acc[id]}})}):[]}
 
 /* 2. Where the money goes: bills by category, biggest first (bills with no category last). */
 function byCategory(c){
@@ -46,9 +60,11 @@ function subscriptions(c){
   var annual=sum(bills,function(b){return b.annual});return {bills:bills,annual:annual,monthly:annual/12}}
 
 /* What goes out in budget month k: bills due that month + spending budgets + savings transfers + one-off payments. */
-function monthOutgoings(c,months,k){var m=mNum(k),ones=monthOneOffs(months,k).filter(function(o){return o.kind!=="in"});
-  var bills=sum(c.bills.filter(function(b){return applies(b,m)}),function(b){return num(b.amount)}),budgets=sum(c.budgets,function(b){return num(b.amount)}),
-    savings=sum(c.savings,function(s){return num(s.amount)}),oneOffs=sum(ones,function(o){return num(o.amount)});
+function monthOutgoings(c,months,k){var m=mNum(k),ones=monthOneOffs(months,k).filter(function(o){return o.kind!=="in"});c=cfgFor(c,k,ones);
+  // 2.12.1: what goes out of a boarder's own account is theirs, not the household's.
+  var out=boarderAccounts(c),home=function(x){return !out[x.account||x.fromAccount]};
+  var bills=sum(c.bills.filter(function(b){return applies(b,m)&&home(b)}),function(b){return num(b.amount)}),budgets=sum(c.budgets.filter(home),function(b){return num(b.amount)}),
+    savings=sum(c.savings.filter(home),function(s){return num(s.amount)}),oneOffs=sum(ones,function(o){return num(o.amount)});
   return {k:k,bills:bills,budgets:budgets,savings:savings,oneOffs:oneOffs,oneOffCount:ones.length,total:bills+budgets+savings+oneOffs}}
 
 /* The 12 budget months the heavy/light and projected float charts show: 3 before k, k itself, and 8 after. */
@@ -65,17 +81,19 @@ function heavyLight(c,months,k,keys){var list=(keys||nextMonths(k,12)).map(funct
 
 /* 5. Projected float for the given budget months (default: the 12 from k), from current settings, typed or estimated
    pay and known one-offs. A month with typed pay also has predicted: the float the app showed before pay was typed
-   (each person's estimate from earlier months, or usual pay), or null when there was nothing to predict from. */
-function projectedFloat(c,months,k,keys){return (keys||nextMonths(k,12)).map(function(x){var ones=monthOneOffs(months,x),r=calc(c,mNum(x),payFor(c,months,x),ones),actual=hasTypedPay(months,x);
-  return {k:x,float:r.flt,short:r2(r.flt)<0,oneOffs:ones.length,actual:actual,predicted:actual?predictedFloat(c,months,x):null}})}
+   (each person's estimate from earlier months, or usual pay), or null when there was nothing to predict from.
+   2.13: short by the one rule (isShort: any account that keeps what's left ends below zero), with the short accounts
+   (shortBy) and whether they're named (named: more than one account keeps what's left, so the total can't say it). */
+function projectedFloat(c,months,k,keys){return (keys||nextMonths(k,12)).map(function(x){var ones=monthOneOffs(months,x),r=calc(cfgFor(c,x,ones),mNum(x),payFor(c,months,x),ones),actual=hasTypedPay(months,x);
+  return {k:x,float:r.flt,short:isShort(r),shortBy:shortAccounts(r),named:shortNamed(r),oneOffs:ones.length,actual:actual,predicted:actual?predictedFloat(c,months,x):null}})}
 function predictedFloat(c,months,k){var pay={},known=true;
   c.people.forEach(function(p){var e=payEstimate(c,months,p.id,k);pay[p.id]=e.v;if(e.from==null&&!(num(p.usualPay)>0))known=false});
-  return known&&c.people.length?calc(c,mNum(k),pay,monthOneOffs(months,k)).flt:null}
+  return known&&c.people.length?calcMonth(c,months,k,pay).flt:null}
 
 /* What makes budget month k differ from a plain month: the bills that aren't paid every month that are due then
    (biggest first) and its one-offs, payments out and money in. Spending budgets and savings transfers are the same
    every month, so they never make a month differ. */
-function monthExtras(c,months,k){var m=mNum(k),ones=monthOneOffs(months,k);
+function monthExtras(c,months,k){var m=mNum(k),ones=monthOneOffs(months,k);c=cfgFor(c,k,ones);
   function big(a,b){return b.amount-a.amount||String(a.name).localeCompare(String(b.name))}
   var bills=c.bills.filter(function(b){return perYear(b)<12&&applies(b,m)}).map(function(b){return {name:b.name||"Bill",amount:num(b.amount)}}).sort(big);
   var out=ones.filter(function(o){return o&&o.kind!=="in"}).map(function(o){return {name:o.name||"One-off",amount:num(o.amount)}});
@@ -86,10 +104,11 @@ function monthExtras(c,months,k){var m=mNum(k),ones=monthOneOffs(months,k);
 function extrasText(e,withIn,f){f=f||fmt;var parts=e.bills.map(function(b){return b.name+" "+f(b.amount)}).concat(e.oneOffsOut.map(function(o){return o.name+" "+f(o.amount)+" (one-off)"}));
   if(withIn)parts=parts.concat(e.oneOffsIn.map(function(o){return o.name+" +"+f(o.amount)+" (one-off)"}));return parts.join(", ")}
 
-/* 6. Pay and float history: the last 24 months with typed pay, up to k, oldest first. */
-function payHistory(c,months,k){return typedPayMonths(months,k).slice(-24).map(function(x){var d=months[x],pay={};
+/* 6. Pay and float history: the last 24 months with typed pay, up to k, oldest first. short, shortBy and named as in
+   projectedFloat (2.13). */
+function payHistory(c,months,k){return typedPayMonths(months,k).slice(-24).map(function(x){var d=months[x],pay={},r=calcMonth(c,months,x);
   c.people.forEach(function(p){pay[p.id]=payIsTyped(d,p.id)?num(d.pay[p.id]):null});
-  return {k:x,pay:pay,float:calc(c,mNum(x),payFor(c,months,x),monthOneOffs(months,x)).flt}})}
+  return {k:x,pay:pay,float:r.flt,short:isShort(r),shortBy:shortAccounts(r),named:shortNamed(r)}})}
 
 /* 7. Saved so far: each savings transfer's ticked total (since the first saved month, and this tax year), and how
    consistently it was made. Bills marked as savings are direct debits, counted in each saved month they're due. */
@@ -100,12 +119,13 @@ function tickValue(v,fallback){return v==null||v===false?null:typeof v==="number
 function savedSoFar(c,months,k){
   var used=usedMonths(months,k),ty=taxYear(c.payday,k),items=[];
   function from(start){return used.filter(function(x){return !start||x>=start})}
-  c.savings.forEach(function(s){var total=0,tyTotal=0,ticked=0,first=null;
-    used.forEach(function(x){var v=tickValue(months[x].done&&months[x].done["s:"+s.id],num(s.amount));if(v==null)return;if(!first)first=x;total+=v;ticked++;if(inTaxYear(c.payday,x,ty))tyTotal+=v});
-    var start=s.since?(first&&first<s.since?first:s.since):null,mine=from(start);
+  // 2.12: transfers and bills ended since still count for the months they were there, at that month's amount.
+  allItems(c,"savings").forEach(function(s){var total=0,tyTotal=0,ticked=0,first=null;
+    used.forEach(function(x){var sx=itemAt("savings",s,x)||s;var v=tickValue(months[x].done&&months[x].done["s:"+s.id],num(sx.amount));if(v==null)return;if(!first)first=x;total+=v;ticked++;if(inTaxYear(c.payday,x,ty))tyTotal+=v});
+    var start=s.since?(first&&first<s.since?first:s.since):null,mine=from(start).filter(function(x){return !s.ended||x<s.ended});
     items.push({id:s.id,name:s.name,kind:"transfer",total:total,taxYear:tyTotal,monthsDone:ticked,monthsSaved:mine.length,consistency:mine.length?ticked/mine.length:null,since:mine[0]||null})});
-  c.bills.filter(function(b){return b.savings}).forEach(function(b){var total=0,tyTotal=0,due=0,mine=from(b.savingsSince);
-    mine.forEach(function(x){if(!applies(b,mNum(x)))return;var v=num(b.amount);total+=v;due++;if(inTaxYear(c.payday,x,ty))tyTotal+=v});
+  allItems(c,"bills").filter(function(b){return b.savings}).forEach(function(b){var total=0,tyTotal=0,due=0,mine=from(b.savingsSince).filter(function(x){return !b.ended||x<b.ended});
+    mine.forEach(function(x){var bx=itemAt("bills",b,x);if(!bx||!applies(bx,mNum(x)))return;var v=num(bx.amount);total+=v;due++;if(inTaxYear(c.payday,x,ty))tyTotal+=v});
     items.push({id:b.id,name:b.name,kind:"bill",total:total,taxYear:tyTotal,monthsDone:due,monthsSaved:due,consistency:due?1:null,since:mine[0]||null})});
   return {items:items,taxYear:ty,since:used[0]||null,monthsSaved:used.length,total:sum(items,function(i){return i.total}),taxYearTotal:sum(items,function(i){return i.taxYear})}}
 
@@ -119,12 +139,23 @@ function priceChanges(c,today){var renewed=[],changes=[];
   var before=sum(renewed,function(i){return i.annualFrom}),after=sum(renewed,function(i){return i.annualTo});
   return {changes:changes,renewed:renewed.length,rate:before>0?(after-before)/before:null,yearlyChange:after-before}}
 
-/* 9. Top-ups: accounts that needed topping up in the last 12 used months up to k. */
+/* 9. Accounts that ran short in the last 12 used months up to k. Per account: the top-ups it needed (count, total,
+   average, months; from: the account that sent them) and, since 2.13, the months it was left short (short: count, total,
+   average, months, and how many of each kind: ended, an account that keeps what's left ended the month below zero;
+   cant, a top-up that couldn't be made because the account that would send it had nothing; part, the unsent part of a
+   top-up). "ended" counts only when more than one account keeps what's left (floats not marked short; a top-up's
+   shortfall is a float too): with one, a short month is the month's own shortfall, which Month by month shows. Most
+   months first. */
 function topUps(c,months,k){var used=usedMonths(months,k).slice(-12),acc={};
-  used.forEach(function(x){calc(c,mNum(x),payFor(c,months,x),monthOneOffs(months,x)).steps.forEach(function(s){if(s.kind!=="topup")return;
-    var a=acc[s.to]||(acc[s.to]={account:s.to,from:s.from,count:0,total:0,months:[]});a.count++;a.total+=s.amt;a.months.push(x);a.from=s.from})});
-  var list=Object.keys(acc).map(function(id){var a=acc[id];a.average=a.total/a.count;return a});
-  list.sort(function(a,b){return b.count-a.count||b.total-a.total});
+  function get(id,from){var a=acc[id]||(acc[id]={account:id,from:from||null,count:0,total:0,months:[],short:{count:0,total:0,months:[],ended:0,cant:0,part:0}});if(from)a.from=from;return a}
+  used.forEach(function(x){var r=calcMonth(c,months,x);
+    function left(id,amt,how,from){var s=get(id,from).short;s[how]++;s.total+=amt;if(s.months.indexOf(x)<0){s.count++;s.months.push(x)}}
+    r.steps.forEach(function(s){if(s.kind!=="topup")return;var a=get(s.to,s.from);a.count++;a.total+=s.amt;a.months.push(x);if(s.short)left(s.to,s.short,"part",s.from)});
+    arr(r.cant).forEach(function(s){left(s.to,s.short,"cant",s.from)});
+    if(r.floats.filter(function(f){return !f.short}).length>1)shortAccounts(r).forEach(function(s){if(!s.topup)left(s.id,s.amount,"ended")})});
+  var seen=function(a){return a.count+a.short.months.filter(function(x){return a.months.indexOf(x)<0}).length};
+  var list=Object.keys(acc).map(function(id){var a=acc[id];a.average=a.count?a.total/a.count:0;a.short.average=a.short.count?a.short.total/a.short.count:0;return a});
+  list.sort(function(a,b){return seen(b)-seen(a)||(b.total+b.short.total)-(a.total+a.short.total)});
   return {accounts:list,monthsLooked:used.length}}
 
 /* ---------- reminders: shared by the Reminders tab and the notification schedule ----------
@@ -168,7 +199,8 @@ function reminderAction(c,it){var n=(it.name||"").toLowerCase(),acc=function(id)
    The page works out what to notify for the next `days` days (default 90) and hands the list to the Android app, which
    posts each entry on its date. key is unique per item per day, so nothing is notified twice. Amounts are only included
    when c.notify.amounts is on (notifications can show on the lock screen).
-   (a) "Payday tomorrow", the day before each payday, with the number of transfers for the month it pays for.
+   (a) "Payday tomorrow", the day before each payday, with the number of transfers for the month it pays for (and, with
+       amounts, what's expected to be left over and any account that will be short).
    (b) Each bill renewal and reminder on the day it becomes "due soon" (its remind-me lead time) and on the day itself.
    (c) Each dated one-off, the day before.
    Each entry also carries late: {title, text}, worded for the following day, which the app uses if Android delays
@@ -177,8 +209,10 @@ function notificationSchedule(c,months,today,days){days=days||90;var end=addDays
   function add(date,item,title,text,late){if(date<today||date>end)return;var key=item+"@"+date;if(seen[key])return;seen[key]=1;out.push({date:date,key:key,title:title,text:text,late:late})}
   var pc=c.payday||{};
   if(pc.day){var m0=today.slice(0,7);for(var i=0;i<=4;i++){var pk=shiftMonth(m0,i),q=pk.split("-").map(Number),pd=paydayIn(pc,q[0],q[1]);if(!pd)continue;
-    var bm=budgetMonthOfPay(pc,pk),r=calc(c,mNum(bm),payFor(c,months,bm),monthOneOffs(months,bm)),n=r.steps.length;
-    var body=" pays for "+mLabel(bm)+". "+(n?n+" transfer"+(n===1?"":"s")+" to make.":"No transfers needed.")+(amounts?" Expected left over "+fmt(r.flt)+".":"");
+    var bm=budgetMonthOfPay(pc,pk),r=calcMonth(c,months,bm),n=r.steps.length;
+    // 2.13: with more than one account keeping what's left, a short one is named as the Pay tab's top card names it.
+    var short=amounts&&shortNamed(r)&&isShort(r)?"; "+listAnd(shortAccounts(r).map(function(s){var a=accById(c,s.id);return ((a&&String(a.name||"").trim())||"Unnamed account")+" is short by "+fmt(s.amount)})):"";
+    var body=" pays for "+mLabel(bm)+". "+(n?n+" transfer"+(n===1?"":"s")+" to make.":"No transfers needed.")+(amounts?" Expected left over "+fmt(r.flt)+short+".":"");
     add(addDays(pd,-1),"pay:"+pd,"Payday tomorrow",DAYS[dow(pd)]+" "+fmtDate(pd)+body,{title:"Payday today",text:"Today, "+DAYS[dow(pd)]+" "+fmtDate(pd)+","+body})}}
   reminderList(c,months,today).forEach(function(it){var title=(it.name||(it.kind==="oneoff"?"One-off":"Reminder"))+(amounts&&it.amount!=null&&it.kind!=="rem"?" "+(it.kind==="oneoff"&&it.ref.kind==="in"?"+":"")+fmt(it.amount):"");
     var act=reminderAction(c,{kind:it.kind,name:it.name,status:"soon",yearly:it.yearly,ref:it.ref,month:it.month});
@@ -195,7 +229,8 @@ function notificationSchedule(c,months,today,days){days=days||90;var end=addDays
    the window. repeats: whether any bill was left out of a later month because it was already listed. */
 function notEveryMonth(c,k,n){n=n==null?3:n;var irr=c.bills.filter(function(b){return perYear(b)<12}),seen={},repeats=false;
   function line(b){return {id:b.id,name:b.name,amount:num(b.amount),account:b.account}}
-  function dueIn(x){return irr.filter(function(b){return applies(b,mNum(x))}).map(line).sort(function(a,b){return b.amount-a.amount||String(a.name).localeCompare(String(b.name))})}
+  // 2.12: each month's bills as they are that month (cfgFor).
+  function dueIn(x){return cfgFor(c,x).bills.filter(function(b){return perYear(b)<12&&applies(b,mNum(x))}).map(line).sort(function(a,b){return b.amount-a.amount||String(a.name).localeCompare(String(b.name))})}
   var due=dueIn(k);due.forEach(function(b){seen[b.id]=1});
   var coming=[];for(var i=1;i<=n;i++){var x=shiftMonth(k,i),all=dueIn(x),list=all.filter(function(b){return !seen[b.id]});
     if(list.length<all.length)repeats=true;list.forEach(function(b){seen[b.id]=1});

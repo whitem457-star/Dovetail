@@ -71,7 +71,7 @@ class NativeBridge(private val host: Host, private val store: BackupStore) {
     }
 
     /**
-     * The Pay tab's "Share" with a household set up (2.10): the month's transfers as the message, with the whole backup
+     * "Send an update for the other phone" from the Pay tab's Share (2.10; a choice of its own since 2.10.1): the month's transfers as the message, with the whole backup
      * attached as an update file for the other phone to open. The file must be a backup no bigger than the other phone
      * will open ([MainActivity.MAX_IMPORT_BYTES]) and the text at most [MAX_TEXT_CHARS]; anything else is refused (the
      * page then says it couldn't prepare the file).

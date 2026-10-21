@@ -1,15 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Notification icon: the Pay tab's two arrows, white on transparent (Android tints it). -->
+<!-- Notification icon (2.11): the Dovetail mark in white on transparent (Android tints it). The 52-unit viewport is the
+     middle of the icon's 108-unit canvas, so the paths are the same as ic_launcher_foreground.xml; the gaps are wider
+     (3 units) so they survive at 24dp. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="24dp"
-    android:height="24dp"
-    android:viewportWidth="24"
-    android:viewportHeight="24">
-    <path
-        android:fillColor="#00000000"
-        android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="2.2"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:pathData="M4,7h13l-3,-3M20,17H7l3,3" />
+    android:width="24dp" android:height="24dp" android:viewportWidth="52" android:viewportHeight="52">
+    <group android:translateX="-28" android:translateY="-28">
+        <group>
+            <clip-path android:pathData="M0,0H54V53.5H0Z" />
+            <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="6.5"
+                android:strokeLineCap="round" android:strokeLineJoin="round"
+                android:pathData="M39,33C39,46.64 54,44 54,55V59" />
+        </group>
+        <group>
+            <clip-path android:pathData="M54,0H108V53.5H54Z" />
+            <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="6.5"
+                android:strokeLineCap="round" android:strokeLineJoin="round"
+                android:pathData="M69,33C69,46.64 54,44 54,55V59" />
+        </group>
+        <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="6.5"
+            android:strokeLineCap="butt" android:pathData="M54,56.5V75" />
+        <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="6.5"
+            android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M45.5,66.5L54,75L62.5,66.5" />
+    </group>
 </vector>

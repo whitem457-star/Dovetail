@@ -1,6 +1,6 @@
 // Analysis tab: every section with the made-up 1.x household (figures hand-checked against its backup), the example
 // household, an empty household and a household with top-ups; charts labelled, tables available, keyboard readable.
-import { suite, session, sampleStorage, household, K, T, LS, goMonth, openDetails } from './lib.mjs';
+import { suite, session, sampleStorage, household, K, T, LS, goMonth, openDetails, axe, noSideScroll } from './lib.mjs';
 const { check, finish } = suite('Analysis tab');
 const txt = (p, s) => p.$eval(s, e => e.textContent);
 const card = (p, id) => T(p, '#' + id);
@@ -101,8 +101,8 @@ const prices = await card(p, 'anPrices');
 check('Price changes appears: Leisure Centre £34.00 → £36.00, up 5.9%', prices.includes('Leisure Centre') && prices.includes('£34.00 → £36.00') && prices.includes('up 5.9%') && prices.includes('went up 5.9% overall: £24.00 a year more'), prices);
 check('History appears: one float chart once two months are typed', (await p.$$('#anHistory svg')).length === 1 && (await p.$$('#anHistory svg path[data-kind]')).length === 2);
 await p.focus('#anHistory svg'); await p.waitForTimeout(50);
-// (£2 less than October's £215.66: Leisure Centre was renewed at £36.00 above)
-check('…its reading has the float and each person\'s pay', (await T(p, '#anHistory .tip')).includes('October 2026: £213.66 left over') && (await T(p, '#anHistory .tip')).includes('Alex: £2,291.46') && (await T(p, '#anHistory .tip')).includes('Sam: £2,128.73'), await T(p, '#anHistory .tip'));
+// (Since 2.12 the renewal at £36.00 above applies from November, the pay month the app opens on: October keeps £34.00.)
+check('…its reading has the float and each person\'s pay', (await T(p, '#anHistory .tip')).includes('October 2026: £215.66 left over') && (await T(p, '#anHistory .tip')).includes('Alex: £2,291.46') && (await T(p, '#anHistory .tip')).includes('Sam: £2,128.73'), await T(p, '#anHistory .tip'));
 await p.keyboard.press('Escape');
 await p.click('#anHistory .linkbtn[aria-controls]');
 check('History table lists both months', (await T(p, '#anHistoryTable')).includes('Oct 2026') && (await T(p, '#anHistoryTable')).includes('Nov 2026') && (await T(p, '#anHistoryTable')).includes('£2,400.00'));
@@ -169,5 +169,41 @@ await goMonth(p, 'October 2026'); await p.click('#t-analysis'); await p.waitForT
 check('Top-ups: Bills A needed topping up in 2 of the last 3 months, £150.00 on average, with a suggestion',
   (await card(p, 'anTopUps')).includes('Bills A needed topping up in 2 of the last 3 months you used the app, by £150.00 on average. Moving a bill of about £150.00 from Bills A to Hub would stop that.') && (await T(p, '#anTopUpsH')) === 'Accounts that ran short' && (await card(p, 'anTopUps')).includes("That's a top-up."), await card(p, 'anTopUps').catch(() => ''));
 check('No JS errors (top-ups)', p.errs.length === 0, p.errs.join(' | '));
+await ctx.close();
+// ---------- 6. A household with shares (2.13): one account short while the total looks healthy ----------
+// "Half each" into a joint account with £1,400 rent: Alex £3,000, Sam £600. Every month Sam's half leaves Sam's account
+// £100 short, while the household has £2,200 left in total (stock take, user.md R2.1).
+const halfEach = (o = {}) => household(Object.assign({ schema: 5, payday: { day: 28, weekend: true },
+  people: [{ id: 'a', name: 'Alex', payAccount: 'A', usualPay: 3000 }, { id: 's', name: 'Sam', payAccount: 'S', usualPay: 600 }],
+  accounts: [{ id: 'A', name: "Alex's account", colour: 'blue' }, { id: 'S', name: "Sam's account", colour: 'red' }, { id: 'J', name: 'Joint account', colour: 'orange', funding: { people: ['a', 's'], rule: 'equal' } }],
+  bills: [{ id: 'r', name: 'Rent', amount: 1400, account: 'J', months: [] }] }, o));
+const halfMonths = { '2026-09': { pay: { a: 3000, s: 600 } }, '2026-10': { pay: { a: 3000, s: 600 } } };
+({ ctx, p } = await session({ storage: { [K.cfg]: halfEach(), [K.mon]: halfMonths }, today: '2026-10-16T12:00:00Z' }));
+await p.click('#t-analysis'); await p.waitForTimeout(200);
+check('Shares: the banner names the short account and how to fix it, though the total is £2,200.00', (await p.$eval('#anVerdict', e => e.className)) === 'banner bad' &&
+  (await T(p, '#anVerdict')) === "October 2026: Sam's account short by £100.00. Change how the shared costs are split (Settings › Accounts, Paid for by), or trim a bill or a spending budget.", await T(p, '#anVerdict'));
+check('…and says once that the same account is short every month ahead', (await p.$$eval('#anMonths .banner', b => b.map(x => x.textContent)))[1] === "Also short every month from November 2026 to June 2027: Sam's account by £100.00 each month.");
+check('…the chart\'s description uses the rule: this month, the tightest month and how many are short', (await p.getAttribute('#anMonths svg', 'aria-label')).includes("October 2026 (this month) £2,200.00 left over, Sam's account short by £100.00. Tightest from October 2026: October 2026 £2,200.00, Sam's account short by £100.00. 9 months short."), await p.getAttribute('#anMonths svg', 'aria-label'));
+check('…short months are drawn in the short colour, and the key says so', (await p.$$eval('#anMonths svg path[data-kind]', l => l.filter(x => (x.getAttribute('fill') || '').includes('bad') || (x.getAttribute('stroke') || '').includes('bad')).length)) === 12 && (await T(p, '#anMonths .keyrow')).includes('Short'));
+await p.focus('#anMonths svg'); await p.waitForTimeout(50); await p.keyboard.press('ArrowRight'); await p.keyboard.press('ArrowRight'); await p.keyboard.press('ArrowRight'); await p.waitForTimeout(50);
+check('…each bar\'s reading names the short account', (await p.$eval('#anMonths .sr', e => e.textContent)).startsWith("October 2026 (this month): £2,200.00 (Sam's account short by £100.00). £1,400.00 going out"), await p.$eval('#anMonths .sr', e => e.textContent));
+await p.keyboard.press('Escape'); await p.click('#anMonths .linkbtn[aria-controls]');
+const hrows = await p.$$eval('#anMonthsTable tbody tr', r => r.map(x => [...x.children].map(c => c.textContent)));
+check('…and so does the figures table', hrows[3][0] === 'Oct 2026 (actual)' && hrows[3][1] === "£2,200.00 (Sam's account short by £100.00) (predicted £2,200.00)" && hrows[11][1] === "£2,200.00 (Sam's account short by £100.00)", JSON.stringify(hrows[3]));
+check('The monthly picture says Sam\'s account is short in an average month', (await T(p, '#anPictureShort')) === "In an average month, Sam's account is short by £100.00. The average left over is after that.");
+await p.click('#anHistory .linkbtn[aria-controls]');
+check('Pay and what was left names it in its figures', (await p.$$eval('#anHistoryTable tbody tr', r => r.map(x => x.lastElementChild.textContent))).every(t => t === "£2,200.00 (Sam's account short by £100.00)"));
+const ran = await card(p, 'anTopUps');
+check('"Accounts that ran short" appears, explains an account left short and names Sam\'s account', (await T(p, '#anTopUpsH')) === 'Accounts that ran short' &&
+  ran.includes("An account that keeps what's left has nothing to top it up, so when it can't cover what goes out of it, it ends the month short.") &&
+  ran.includes("Sam's account ended the month short in 2 of the last 2 months you used the app, by £100.00 on average. Change how the shared costs are split, or move a bill out of it.") && !ran.includes("That's a top-up"), ran);
+check('No axe violations (shares, light)', (await axe(p)).length === 0, (await axe(p)).join(' | '));
+check('No JS errors (shares)', p.errs.length === 0, p.errs.join(' | '));
+await ctx.close();
+// Dark, 360px, larger text.
+({ ctx, p } = await session({ w: 360, dark: true, storage: { [K.cfg]: halfEach({ appearance: { theme: 'dark', textSize: 'large' } }), [K.mon]: halfMonths }, today: '2026-10-16T12:00:00Z' }));
+await p.click('#t-analysis'); await p.waitForTimeout(200);
+check('Shares, dark, 360px, larger text: the banners fit with no sideways scrolling', await p.isVisible('#anVerdict') && await noSideScroll(p, 360));
+check('No axe violations (shares, dark, larger text)', (await axe(p)).length === 0, (await axe(p)).join(' | '));
 await ctx.close();
 await finish();

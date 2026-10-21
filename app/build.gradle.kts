@@ -49,8 +49,8 @@ android {
         applicationId = "uk.whiteboard.payday"
         minSdk = 29
         targetSdk = 36
-        versionCode = 18
-        versionName = "2.10.1"
+        versionCode = 22
+        versionName = "2.13"
     }
 
     signingConfigs {
@@ -96,7 +96,7 @@ android {
 
     lint {
         abortOnError = true
-        // The app has no network access and no ads/analytics; these checks don't apply.
+        // These checks look up newer library and SDK versions online; check versions by hand before a release instead.
         disable += setOf("GradleDependency", "NewerVersionAvailable", "AndroidGradlePluginVersion", "OldTargetApi")
     }
 }

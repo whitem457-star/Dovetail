@@ -97,15 +97,22 @@ const screens = [
   ['Pay with the first-month hint', null, async p => { await walkSetup(p, 7); await p.click('#su_finish'); await p.waitForTimeout(200); await skipTour(p); }],
   ['Settings, quick add and search', sampleStorage(false), async p => { await p.click('#t-settings'); await p.click('#sBills summary'); await p.click('#quickAddBtn'); await p.fill('#billSearch', 'lum'); }],
 ];
-for (const w of [360, 400]) for (const dark of [false, true]) for (const [name, storage, act, opts] of screens) {
-  ({ ctx, p } = await session({ w, dark, storage, ...(opts || {}) }));
+// Each screen is opened once, at 360px in light, and then checked at both widths in light and dark by resizing and
+// switching the colour scheme in place (the page's colours come from CSS alone, with no transitions under reduced
+// motion). Opening it fresh for each of the four took most of this suite's time.
+for (const [name, storage, act, opts] of screens) {
+  ({ ctx, p } = await session({ w: 360, storage, ...(opts || {}) }));
   await act(p); await p.waitForTimeout(150);
-  const ax = await axe(p);
-  const tag = `${name} at ${w}px${dark ? ', dark' : ''}`;
-  check('Accessibility: ' + tag, ax.length === 0, ax.join(', '));
-  check('No sideways scroll: ' + tag, await noSideScroll(p, w));
-  if (w === 400) await shot(p, ('s_' + name + (dark ? '_dark' : '')).replace(/[^a-z0-9_]+/gi, '_'));
-  if (p.errs.length) check('No JS errors: ' + tag, false, p.errs.join(' | '));
+  let errs = 0;
+  for (const [w, dark] of [[360, false], [360, true], [400, false], [400, true]]) {
+    await p.setViewportSize({ width: w, height: 860 }); await p.emulateMedia({ colorScheme: dark ? 'dark' : 'light' }); await p.waitForTimeout(100);
+    const ax = await axe(p);
+    const tag = `${name} at ${w}px${dark ? ', dark' : ''}`;
+    check('Accessibility: ' + tag, ax.length === 0, ax.join(', '));
+    check('No sideways scroll: ' + tag, await noSideScroll(p, w));
+    if (w === 400) await shot(p, ('s_' + name + (dark ? '_dark' : '')).replace(/[^a-z0-9_]+/gi, '_'));
+    if (p.errs.length > errs) { check('No JS errors: ' + tag, false, p.errs.slice(errs).join(' | ')); errs = p.errs.length; }
+  }
   await ctx.close();
 }
 await finish();

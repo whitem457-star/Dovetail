@@ -5,6 +5,20 @@ import http from 'http';
 
 export const PAGE = process.env.APP_URL ? new globalThis.URL(process.env.APP_URL).pathname
   : new globalThis.URL('../app/build/generated/payday-assets/index.html', import.meta.url).pathname;
+// Stop before testing a stale page: a page built before the last change under web/ (a start-up hook that ran before
+// the branch was checked out, or a forgotten rebuild) would test the previous version and could still pass.
+// `npm test` rebuilds first; this catches `node qa_x.mjs` run on its own. APP_URL pages are the caller's business.
+if (!process.env.APP_URL) {
+  const web = name => new globalThis.URL('../web/' + name, import.meta.url);
+  const stale = why => { console.error(`The built page is older than web/: run node tests/build-page.mjs (${why})`); process.exit(1); };
+  if (!fs.existsSync(PAGE)) { console.error('There is no built page: run node tests/build-page.mjs'); process.exit(1); }
+  const ver = text => (/var VERSION="([^"]*)"/.exec(text) || [])[1];
+  const built = ver(fs.readFileSync(PAGE, 'utf8')), source = ver(fs.readFileSync(web('src/ui.js'), 'utf8'));
+  if (built !== source) stale(`the page is ${built}, web/src/ui.js is ${source}`);
+  const pageTime = fs.statSync(PAGE).mtimeMs;
+  const newer = ['template.html', 'src/calc.js', 'src/migrate.js', 'src/analysis.js', 'src/export.js', 'src/ui.js'].filter(n => fs.statSync(web(n)).mtimeMs > pageTime);
+  if (newer.length) stale('changed since it was built: web/' + newer.join(', web/'));
+}
 export const AXE = fs.readFileSync(new globalThis.URL('./node_modules/axe-core/axe.min.js', import.meta.url), 'utf8');
 // A real 1.4 backup of our household (made by the 1.4 page). Test data only: it is never part of the app, and only the
 // golden and update tests use it. It isn't in the public copy, so it's null there and those tests skip.
@@ -22,9 +36,12 @@ export function suite(title) {
   const finish = async () => {
     await browser.close(); server.close();
     console.log(`\n== ${title} ==\n` + results.join('\n'));
-    const skipped = results.filter(r => r.startsWith('SKIP')).length;
-    console.log(`\n${results.length - fails - skipped} passed, ${fails} failed${skipped ? ', ' + skipped + ' skipped' : ''}`);
-    if (fails) process.exitCode = 1;
+    const skipped = results.filter(r => r.startsWith('SKIP'));
+    console.log(`\n${results.length - fails - skipped.length} passed, ${fails} failed${skipped.length ? ', ' + skipped.length + ' skipped' : ''}`);
+    // A skipped check hasn't tested anything, so it fails the run (a shallow clone once skipped four update tests with
+    // a green result). Set ALLOW_SKIP=1 to accept skips on purpose, for example in a clone without the old releases.
+    if (skipped.length) console.log(`\n${process.env.ALLOW_SKIP ? 'Skipped (allowed by ALLOW_SKIP)' : 'FAILED: these checks were skipped (set ALLOW_SKIP=1 to accept that)'}:\n` + skipped.map(r => '  ' + r.slice(6)).join('\n'));
+    if (fails || (skipped.length && !process.env.ALLOW_SKIP)) process.exitCode = 1;
   };
   return { check, skip, finish };
 }
@@ -62,7 +79,7 @@ const MOCK = () => {
     setTheme(t) { st.calls.push(['theme', t]); save(); },
     haptic(k) { st.calls.push(['haptic', k]); save(); },
     pickBackupFile() { st.calls.push(['pick']); save(); },
-    keepBackup(json) { st.calls.push(['keep', JSON.parse(json).config.people.map(x => x.name).join(',')]); if (st.keepFails) { save(); return false; } st.n++; st.backups.unshift({ name: 'backup-20261015-12' + String(st.n).padStart(4, '0') + '-keep.json', savedAt: '2026-10-15T12:' + String(st.n).padStart(2, '0') + ':00', kept: true, json }); save(); return true; },
+    keepBackup(json) { st.calls.push(['keep', (JSON.parse(json).config.people || []).map(x => x.name).join(',')]); if (st.keepFails) { save(); return false; } st.n++; st.backups.unshift({ name: 'backup-20261015-12' + String(st.n).padStart(4, '0') + '-keep.json', savedAt: '2026-10-15T12:' + String(st.n).padStart(2, '0') + ':00', kept: true, json }); save(); return true; },
     notificationsEnabled() { return !!st.notifyOn; }, notificationsAllowed() { return st.notifyAllowed !== false; },
     setNotificationsEnabled(on) { st.calls.push(['notify', on]); save(); },
     setNotificationSchedule(j) { st.schedules = (st.schedules || 0) + 1; st.schedule = JSON.parse(j); st.calls.push(['schedule', st.schedule.entries.length]); save(); return true; },
@@ -108,7 +125,8 @@ export const steps = p => p.$$eval('#steps .step', e => e.map(s => s.querySelect
 export const float = p => p.$eval('#floatV', e => e.textContent);
 export async function typeIn(p, sel, v, wait = 120) { await p.fill(sel, v); await p.waitForTimeout(wait); }
 export async function axe(p) {
-  await p.addScriptTag({ content: AXE });
+  // Inject axe (550 KB) once per page load rather than on every call: qa_ui checks each screen four times in place.
+  if (!(await p.evaluate(() => typeof window.axe?.run === 'function'))) await p.addScriptTag({ content: AXE });
   return p.evaluate(async () => (await axe.run(document, { runOnly: ['wcag2a', 'wcag2aa'] })).violations.map(v => v.id + ':' + v.nodes.length + ' ' + v.nodes.slice(0, 2).map(n => n.target.join(' ')).join(' / ')));
 }
 export const noSideScroll = (p, w) => p.evaluate(w => document.documentElement.scrollWidth <= w && document.getElementById('main').scrollWidth <= w, w);
@@ -137,7 +155,7 @@ export const SETUP_FILL = {
   2: async p => { await p.fill('#su_p_0', 'Alex'); await p.fill('#su_pu_0', '2100'); await p.click('#su_addp'); await p.fill('#su_p_1', 'Sam'); await p.fill('#su_pu_1', '1850');
     await p.click('#su_addi'); await p.fill('#su_in_0', 'Child Benefit'); await p.fill('#su_inv_0', '110'); },
   3: async p => { await p.click('label[for=su_same_yes]'); await p.selectOption('#su_day', '28'); },
-  4: async p => { await p.check('#su_shape_split'); },
+  4: async p => { if (await p.$('#su_style_pool')) await p.check('#su_style_pool'); await p.check('#su_shape_split'); },
   5: async p => { const chip = (sec, n) => p.click(`section[aria-labelledby=${sec}] .su-chips button:has-text("${n}")`);
     await chip('su_h_b2', 'Mortgage'); await p.fill('#su_b_2_0_a', '925'); await chip('su_h_b2', 'Council Tax'); await p.fill('#su_b_2_1_a', '168');
     await chip('su_h_b2', 'Car insurance'); await p.selectOption('#su_b_2_2_m', '3'); await p.fill('#su_b_2_2_a', '420');

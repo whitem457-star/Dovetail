@@ -74,6 +74,21 @@ check('Short month: "Short this month" with the shortfall in red', (await T(p, '
 check('…and no ring when there are no transfers', (await p.$('#hero .ring')) === null);
 await ctx.close();
 
+// 2.13: a pooled household whose top-up can't be made (pay into Bills, which passes what's left to Spending; Spending
+// has nothing to send back). Two floats, one account that keeps what's left: "in Spending", never "across 1 account".
+for (const dark of [false, true]) {
+  ({ ctx, p } = await session({ dark, w: 360, storage: { [K.cfg]: household({ schema: 5, people: [{ id: 'a', name: 'Ann', payAccount: 'b', usualPay: 2000 }],
+    accounts: [{ id: 'b', name: 'Bills', colour: 'blue', leftoverTo: 's' }, { id: 's', name: 'Spending', colour: 'teal', leftoverTo: null }],
+    bills: [{ id: 'r', name: 'Rent', amount: 1000, account: 'b', months: [] }, { id: 'i', name: 'Car insurance', amount: 1500, account: 'b', months: [] }],
+    budgets: [{ id: 'f', name: 'Food', amount: 400, account: 's' }] }) } }));
+  const hero = await T(p, '#hero');
+  check(`2.13, ${dark ? 'dark' : 'light'}: a top-up that can't be made: the hero says "in Spending", not "across 1 account", and names both shortfalls`,
+    (await p.textContent('#heroFloat')) === '\u2212£900.00' && (await T(p, '#hero .where')) === 'in Spending' && !hero.includes('across') &&
+    hero.includes('Spending is short by £400.00') && hero.includes('Bills is short by £500.00'), hero);
+  check(`…no axe violations, no sideways scrolling (${dark ? 'dark' : 'light'}, 360px)`, (await axe(p)).length === 0 && await p.evaluate(() => document.documentElement.scrollWidth <= 360), (await axe(p)).join(' | '));
+  await ctx.close();
+}
+
 // one account short while the total is fine; a big float; long names at 360px with larger text
 ({ ctx, p } = await session({ w: 360, h: 800, storage: { [K.cfg]: household({ schema: 5, appearance: { theme: 'system', textSize: 'large' },
   people: [{ id: 'a', name: 'Rosalind', payAccount: 'x', usualPay: 250000 }],
