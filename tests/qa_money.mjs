@@ -64,6 +64,7 @@ await p.evaluate(() => document.documentElement.setAttribute('data-text', 'large
 await toStep4(p, [['Alexandra', '3000'], ['Bartholomew', ''], ['Christabel', '900']]);
 await p.check('#su_style_contribute'); await p.check('#su_rule_sameLeft'); await p.waitForTimeout(80);
 check('Three people: "Everyone in the household", with board for anyone but the first', await p.isVisible('#su_h_board') && !(await p.$('#su_board_0_no')) && await p.isVisible('#su_board_1_no') && await p.isVisible('#su_board_2_no'));
+check('…which says what board is, once, under the heading', (await T(p, '#su_board_is')) === 'Board is a set amount each month towards the household, as a grown-up child living at home might pay. Someone who pays board keeps the rest of their pay.' && (await p.$$('#su_board_is')).length === 1, await T(p, '#su_board_is'));
 check('Someone with no pay: does the earner give them money?', (await T(p, '#su_h_move')) && (await p.textContent('#setup fieldset:has(#su_gets_1_no) legend')) === 'Does Bartholomew get money from Alexandra each month?');
 await p.check('#su_gets_1_yes'); await p.check('#su_board_2_yes'); await p.waitForTimeout(80);
 check('Dark, 360px, larger text: no sideways scrolling', await noSideScroll(p, 360));
@@ -468,7 +469,7 @@ for (const dark of [false, true]) {
   ({ ctx, p } = await session({ today: TODAY, w: 360, dark }));
   await p.evaluate(() => document.documentElement.setAttribute('data-text', 'large'));
   await p.click('#su_start'); await p.waitForTimeout(80);
-  check(`2.13: the pay step says "Dovetail works with monthly pay, in pounds." (360px, larger text${dark ? ', dark' : ''})`, (await T(p, '#setup')).includes('Dovetail works with monthly pay, in pounds.') && await noSideScroll(p, 360));
+  check(`2.16: the pay step says "Dovetail works in pounds. Pay can come monthly, …" (360px, larger text${dark ? ', dark' : ''})`, (await T(p, '#setup')).includes('Dovetail works in pounds. Pay can come monthly, every four weeks, every two weeks or weekly.') && await noSideScroll(p, 360));
   check(`No axe violations (pay step${dark ? ', dark' : ''})`, (await axe(p)).length === 0, (await axe(p)).join(' | '));
   await ctx.close();
 }

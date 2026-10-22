@@ -1,5 +1,195 @@
 # Changelog
 
+## 2.18 (versionCode 29)
+A new welcome screen, setup's first step (`docs/welcome.md`, agreed by the owner on 22 October 2026). Nothing else
+changes: no figures, data, calculation or permissions; later setup steps change only their step numbers; the golden
+tests are unchanged.
+- **The welcome sells the idea at a glance**: the mark and "Dovetail" in a small brand line, the headline "Payday,
+  without the guesswork", one line ("Every bill, the account it leaves from, and the transfers to cover them, all in one
+  place."), and a picture of a finished payday: a card in the Pay tab's style with £3,000 pay, three numbered transfers
+  to a Bills account, an Everyday account and Savings with each account's bills ticked under its transfer, and "£500
+  left over, yours to spend" with "All 7 bills covered". It's captioned "An example. If pay won't stretch, Dovetail says
+  which account will be short." The figures are made up, add up, and are worked out from one constant
+  (`WELCOME_EXAMPLE`); words and amounts are text, so they grow with larger text, and screen readers hear one sentence.
+- **A trust line** above the buttons: Any bank · No bank login · No internet. The three ways in and "Skip setup for
+  now" are unchanged, with a note under them: "About five minutes to set up, and you can change anything later. A rough
+  figure is fine for bills."
+- **Someone arriving with figures** (an opened backup or update file, an automatic backup, Start again) sees the offer
+  straight under the headline with no picture, so the card and the buttons come first. "Start fresh" brings the picture
+  back and puts focus on the headline.
+- **Setup counts six steps from pay**: the welcome has no step counter, pay is "Step 1 of 6" and the first payday "Step 6
+  of 6"; the pay step's other income card says "in step 3". Code, tests and the simulation keep the internal numbers 1–7.
+  "Change how you manage your money" still says "Step 1 of 2".
+- **Cancel** on an opened backup file in setup now puts focus on the headline too (the button that had it is gone).
+- What's new: one line, saying the first screen is new and nothing changes in your figures. (The plan had none, since
+  households already set up never see the welcome; but someone updating from an older version would then have seen
+  "What's new in 2.18" with nothing for 2.18.)
+- Tests: a new `qa_welcome.mjs` (88 checks: the picture and its figures, the screen-reader sentence, the trust line, the
+  step counter forward and back, change mode, every way of arriving with figures, the fold at 360×640, 320px with larger
+  text, axe and the card's edge in light, dark and each forced theme); `qa_setup.mjs` and `qa_mark.mjs` for the new
+  title, counter and brand line; `qa_v27.mjs` and `qa_fixes.mjs` for 2.18's What's new line.
+
+## 2.17 (versionCode 28)
+Counting paydays: layer 2 of pay patterns (`docs/payperiods.md` 5.4–5.6, built now at the owner's decision of 22 October
+2026 rather than waiting for evidence; the engineering decisions are section 13.2). Nothing changes for a household
+without a payday date: monthly households match 2.15's own figures (400 in the simulation) and households on a pattern
+without a date match 2.16.1's (300), the golden tests are unchanged, and the schema stays 5.
+- **A recent payday, optional, for someone on a pattern**: setup's pay step ("A recent payday (optional)") and
+  Settings › People, with "Next payday: Fri 22 Jan, then every week." under it. Adding, correcting or removing it isn't
+  a change of pay, and never moves a month already typed.
+- **Counting**: Dovetail counts each dated person's paydays between one transfer day and the next, moving a payday on a
+  weekend or an England and Wales bank holiday to the working day before (2.16.1's rule, the same as the transfer day).
+  The Pay tab's hint lists them ("4 paydays since Fri 30 Oct: 6, 13, 20 and 27 Nov (2 still to come)").
+- **An extra payday opens by itself**: with one more payday than usual, the extra payday line opens once pay is typed,
+  with an average pay set aside; the amount follows the typed pay until you change it. "Not an extra payday" corrects a
+  count that's too high, and "Had an extra payday?" stays for a count that's too low (a holiday Dovetail doesn't know).
+- **Fewer paydays than usual** (a new job, or a payday moved across the transfer day): a line says so, and the transfers
+  use what arrived. After a month whose extra was set aside, "Use it this month" adds it as a one-off, and the earlier
+  month's line is locked ("Used in May 2027.") until the one-off is removed.
+- **The count is frozen when a month is first typed or ticked**, with the amount set aside, so no later change to the
+  transfer day, a payday date or the holiday rule moves a saved month, and a phone on 2.16 shows the same figures.
+  An extra payday already there when a month is counted (one you opened with "Had an extra payday?") stays yours:
+  it's never rewritten, and changing how often someone's paid never clears it (L22).
+- **A new job**: the change sheet's "When's the first pay on the new pattern?" counts from that pay; if it's for a later
+  month, the sheet says when to make the change.
+- **Analysis** measures average pay per payday from the months typed ("about £1,837.62 a month: an average of £424.07 a
+  payday over 6 months"), and Month by month shows extra paydays ahead. Exports say "not an extra payday" and add a
+  preface sentence for a household with a date.
+- What's new: two lines.
+- Data: schema 5. New optional `people[].pattern.on` and `.since`, `months[k].paydays` {personId: 0–6},
+  `extra[id].edited`, and a one-off's `extraFrom`/`extraOf`. A file with a payday date, or with an extra payday used in a
+  later month, is version 6 and needs 2.17 (`PAYDAY_DATE_NEEDS`).
+- An update test from the real 2.16.1 release. The simulation gained an independent payday counter and the freeze's
+  oracle (`sim/paydays.mjs`): every typed or ticked month is unchanged after 14 kinds of settings edit; `sim/patterns.mjs`
+  holds 2.16.1's figures for households on a pattern without a date.
+
+## 2.16.1 (versionCode 27)
+Bank holidays (`docs/payperiods.md` section 10, item 1, approved by the owner on 22 October 2026; the engineering
+decisions are section 13.1). Transfers, shares, left over and files don't change: the golden tests are unchanged, the
+simulation checks 400 monthly households against 2.15's own figures, and a unit test checks every month's transfers are
+the same under every payday setting.
+- **England and Wales bank holidays, by rule** (`bankHolidaysEW`, no table to maintain): New Year's Day, Good Friday,
+  Easter Monday, the early May, spring and summer bank holidays, Christmas Day and Boxing Day, with substitute days.
+  They match gov.uk's published dates for 2019–2028 apart from one-off holidays (VE Day 2020, the 2022 Jubilee and
+  state funeral, the 2023 coronation), which a rule can't know; nor does it know Scotland's or Northern Ireland's.
+- **A payday or transfer day on one moves to the working day before** (`workingDayOnOrBefore`), wherever a weekend
+  moves it: "Last working day", and a day with "If it falls on a weekend…" ticked. An unticked day never moves.
+- **What that changes for an existing household: dates only.** The month the app opens on, the Pay line, "Payday
+  tomorrow", the Reminders window, and, once from 2019 to 2035, which tax year a month's savings count in: a payday on
+  the 6th (moved for weekends) in April 2026 (Easter Monday) is now Thursday 2 April, so April 2026's savings count in 2025–26. What's new
+  says so (D11).
+- **Words:** the checkbox reads "If it falls on a weekend or bank holiday, we're paid the working day before" (or "do it
+  on the working day before" for a transfer day); Settings › Payday says it knows England and Wales bank holidays, not
+  Scotland's, Northern Ireland's or one-off ones (with and without a pay pattern); the export says "the working day
+  before if it falls on a weekend or an England and Wales bank holiday".
+- What's new: three lines. Data: unchanged (schema 5; no new fields; files are as they were).
+- An update test from the real 2.16 release (`RELEASE['2.16']`), and an independent check in the simulation
+  (`sim/holidays.mjs`: its own Easter and holiday rule and a brute-force step back, over every setting and month
+  1990–2100).
+
+## 2.16 (versionCode 26)
+Pay patterns: people paid weekly, every two weeks or every four weeks (`docs/payperiods.md` 5.3 and 11.2, adopted by
+the owner on 22 October 2026). The routine stays once a month. Nothing changes for a household that doesn't choose a
+pattern: monthly households' settings, months, transfers, exports, notifications and files are byte-identical (the
+simulation checks 400 against 2.15's own figures), the golden tests are unchanged, and the schema stays 5.
+- **How often they're paid**: setup's pay step and Settings › People ask it for each person (every month by default).
+  For a pattern, the pay asked for is the take-home pay each time, with "About £1,690.00 a month over a year."
+- **The transfer day**: in a household with a pattern, the payday setting is called the transfer day everywhere
+  (`dayWord`), and it's required. Monthly households keep "payday".
+- **What the transfers plan on** (`planPay`, one figure for the Pay tab, setup's preview, Analysis's months ahead and
+  a change of style): someone on a pattern types everything that's arrived since the last transfer day; until then
+  the plan is their pay each time × the paydays every month has (4, 2 or 1), never an earlier month's total.
+- **An extra payday**: once their pay is typed, "Had an extra payday?" sets one pay aside, left in their account and
+  out of the transfers, unless "Count it this month". Set aside never moves a share; counted moves shares only when
+  you share what's left after your own bills or so you each keep the same, and a percentage of pay. If transfers are
+  already ticked it starts counted, and setting it aside takes two taps with a warning.
+- **A ticked transfer that went down** now says how much to move back, for every household: "…, £64.80 less. Move
+  £64.80 back to Current account, or untick and tick again once it's right."
+- **Standing orders from each pay**: for each share, top-up or savings transfer out of an account only that person
+  is paid into, the amount that covers every month (the largest over the next year ÷ 4, 2 or 1, rounded up), listed in
+  Settings › People and shown on the Pay tab in the first month and when it goes up. A pay account that passes
+  everything on says why there's no figure. One person on a pattern who picks setup's pay, bills and spending accounts
+  gets Bills topped up from the pay account, so a standing order shows (E17, `docs/payperiods/decision12.md`).
+- **Changing pattern** with saved months applies from the pay month the app opens on, like usual pay in 2.15, and
+  asks for a transfer day if there isn't one; an edit to pay each time is dated too.
+- **Shares in proportion to pay** use pay over a year ÷ 12 for someone on a pattern, so an extra payday never moves them.
+- Analysis, exports (a pay cell, extra paydays, two CSV columns, the preface), notifications ("Transfer day
+  tomorrow"; the Android channel description) and Help (one text for everyone: Words, How Dovetail works, the tour)
+  follow. Universal Credit stays a person's pay typed from the statement.
+- The product's definition now reads "Pay can come monthly, every four weeks, every two weeks or weekly; the
+  transfers are made once a month." (README, CLAUDE.md, the stock take).
+- What's new: three lines.
+- Data: schema 5. New optional `people[].pattern` {every: 7, 14 or 28, each}, with `usualPay` worked out from it
+  (each × 52, 26 or 13 ÷ 12), dated through `was`; new optional `months[k].extra` {personId: {amount, counted?}}. A file
+  with a pattern is version 6 and needs 2.16 (`PATTERN_NEEDS`), so a 2.15 phone says "This file needs Dovetail 2.16 or
+  later".
+- Built by an engineering team: a core engineer, a screens engineer, and a test and simulation engineer whose oracle
+  was written from the design alone, with a fresh reviewer before and after.
+- Tests: `unit/v216.test.mjs`; a new page suite `qa_patterns.mjs`; the household simulation gains patterns throughout
+  (an independent oracle for the pay used, the share rules, standing orders and the notice), dated pattern changes in
+  the history part, `monthly.mjs` (400 monthly households exactly as 2.15 had them) and setup's screens with patterns
+  in `sim:ui`; a real 2.15 → 2.16 update test (`RELEASE['2.15']`, from `66d192d`).
+
+## 2.15 (versionCode 25)
+Dated pay, the first release of pay periods (`docs/payperiods.md` 5.2 and 11.1, adopted by the owner on 22 October
+2026). A fix for every household: changing someone's usual pay used to rewrite every earlier month that read it (the
+"in proportion to pay" shares and the estimate of months with no typed pay), so a month already ticked could show a
+difference to send. No household's figures change until its usual pay is edited; the golden tests are unchanged.
+- **Usual pay is dated like a bill**: with months saved before the pay month the app opens on, editing someone's usual
+  pay in Settings › People applies from that month, and earlier months keep what it was. The line under it says
+  "Changed from November 2026. Earlier months keep £2,300.00." ("…keep no usual pay." for someone added with none), with
+  "Change earlier months too". Without saved months, an edit changes every month, as before. Removing a person, their
+  pay account and board are still undated, as before.
+- **Setup's pay step** says what to do if you're paid weekly, every two weeks or every four weeks (make the payday the
+  day you'll do the transfers, and type the pay that's arrived since the last one), and that Universal Credit is
+  counted as the pay of the person it's paid to, typed from the statement each month.
+- Analysis's predicted line for a past month now asks whether that month had a pay to predict from, not whether the
+  person has a usual pay today (the same answer for every household without dated pay).
+- What's new: one line.
+- Data: schema 5. New optional `people[].was` [{until, usualPay}], its own dating (`hasPersonDated`, `personAt`,
+  `personSnap`, `datePersonEdit`; people aren't in `ITEM_DATED`, whose checks would overwrite it), read by `cfgFor` and
+  by `payEstimate`'s usual-pay fallback, so callers that pass the settings as they are still get the month's figure.
+  `normCfg` keeps an entry only with a valid month and an amount of £0 or more, sorted, one per month, and reports the
+  rest. A file with dated pay is version 6 and needs 2.15 (`DATED_PAY_NEEDS`; `backupNeedsFor` gives the highest that
+  applies), so a 2.14.1 phone says "This file needs Dovetail 2.15 or later"; every other household's files are as before.
+- Built by an engineering team (a core engineer, a screens engineer and a test and simulation engineer, with a fresh
+  reviewer before the build and after it) from `docs/payperiods.md`; the readiness review's answers are its section 11.
+- Tests: `unit/datedpay.test.mjs` (every function, `normCfg`'s reports, backups and needs, and the history fix: a
+  ticked month's shares in proportion to pay kept after a dated edit, and moved by an undated one, to show the test
+  bites); a new page suite `qa_datedpay.mjs` (the line, "Change earlier months too", a ticked earlier month unchanged
+  through an edit and a reload, the current month's "changed" line, the update file's version and needs, the setup
+  wording, axe, dark, 360px, larger text and focus); the household simulation's history part gains dated usual pay
+  (random edits, repeats in a month and edits back, every earlier month's transfers and pay unchanged, checked
+  against an independent list of the edits and the oracle); a real 2.14.1 → 2.15 update test (`RELEASE['2.14.1']`,
+  from `afcbf61`).
+
+## 2.14.1 (versionCode 24)
+Wording only (the owner, 22 October 2026). No household's figures change: the golden tests are unchanged and the
+simulation's figures are the same.
+- **Board is explained where you first meet it**: setup's "Everyone in the household" and the hint under Settings ›
+  People's "Pays board" now start "Board is a set amount each month towards the household, as a grown-up child living
+  at home might pay." (`BOARD_IS` in `ui.js`, so the two can't drift apart), and "Words Dovetail uses" reads "Money
+  someone living with you, like a grown-up child at home, pays towards the household each month. It's also called keep." Board is the usual UK word, but not everyone knows it; "keep" is what it's
+  called in much of the north and Scotland.
+- What's new: one line.
+- An independent review found, and this fixes: a page suite whose household was pinned to 2.14 (it now reads the
+  version from the built page), and wording where "(also called keep)" seemed to name the grown-up child.
+- Tests: checks for the new wording in `qa_money`, `qa_fixes` and `qa_figure`; a real 2.14 → 2.14.1 update test
+  (`RELEASE['2.14']`, from `45fab3a`), with a household that has shares and a rough figure keeping its transfers, its
+  "not listed yet" line and a backup that still needs 2.14.
+
+## 2.14 (versionCode 23)
+Onboarding, from `docs/onboarding.md` (agreed by the owner on 21 October 2026): setting up no longer needs every direct debit typed before Dovetail can help. Built as three waves (the calculation and data, the paste reader and the simulation's independent oracle in parallel; then the screens; then an independent review), each tested on its own and then together. The owner's household has no rough figure and gets exactly the transfers, Analysis figures and exports it had (every saved and future month compared with 2.13; the golden tests unchanged). Dovetail is for a wide audience (the owner, 21 October 2026): people new to managing money are one group among several, so setup and Help suit confident households too.
+- **A rough figure for an account's bills**: in setup's bills step, "Not sure of every bill? Start with a rough figure" (or the link in any account's section) asks "Roughly how much goes out of Joint in bills each month?", counting what leaves by itself, Council Tax as monthly, and leaving out bills that come only a few times a year; "No bills from here" is one tap; "Already move a set amount into Joint each month?" checks the figure against it and asks once if the figure is well below ("Is the other £200 for bills too?"); round up if unsure. Then add the big ones if you know them. The figure is money out of the account: *not listed yet* = the figure less the account's listed bills that come 7 or more months a year (never below £0), whatever month it is, and the listed bills due that month count on top; so listing a monthly bill within the figure changes no transfer in any month, a Council Tax over 10 months lowers the months it skips, and yearly or quarterly bills always sit on top. Someone's own account under "what's left after own bills" or "so we each keep the same" isn't offered a figure (a generous guess would shift cost to their partner; setup says why), nor is a boarder's. `estimates`, `estimateParts`, `setEstimate`, `endEstimates`, `estimateBlock` in `calc.js`.
+- **Living with the figure**: the Pay tab says "Includes £380 of bills not listed yet." under the transfer into the account, the account's card in This month in detail has the row, Bills by account and Settings › Bills show "£1,120 listed · £380 not listed yet (your figure £1,500)" with a progress bar and **Change the figure** and **That's all of them**, the "Finish setting up" checklist says "List Joint's bills (£380 to go)", setup's preview says what's included, Analysis's monthly picture and Month by month count it as bills and "Where the money goes" shows "Not listed yet" as its own bar after the categories, and the exports list each figure (the months spreadsheet gains a `bills_not_listed` column only for households with one). When the listed bills pass the figure Dovetail asks once "Is that all of them?" ("There are more" sets the figure to the next £50 above, shown with Change); "That's all of them" ends the figure from this pay month, with Undo and the good news when it lowers a transfer ("Alex's share goes down by £100 a month"); deleting a 7-plus-month bill offers "Lower Joint's figure by £30 too?"; a price rise absorbed by the figure says so; a quiet Settings line says a figure may be low if the account ran short. Changes to a figure are dated like bills once there are earlier months, so those months keep what they had. No notifications, nothing on the top card.
+- **Paste a list** (`parseBillLines` in `calc.js`), in setup and Settings › Bills: one bill per line from copied spreadsheet cells, "Netflix £9.49" or "Netflix, 9.49"; amounts with £, commas or brackets; monthly, yearly (asks the month when none is named), quarterly and Council Tax; DD/SO marks, dates and references stripped; a third column naming the account or month; header and total lines ignored; lines with two amounts, no amount or no name shown as they were pasted; duplicates of bills already there left unticked; amounts over £5,000 flagged. The rows are checked before anything is added, as Quick add's are.
+- **Setup's bills step**: a running total per account ("Joint: 14 bills, £1,642.30 a month"); "Any bills that don't come every month?" at the end, with its own chips (car insurance, TV Licence, home insurance, breakdown and boiler cover, yearly subscriptions, service charge, quarterly water); the common bills grouped (about 25: home, phones, transport, children, debt, subscriptions, insurance, each with its usual frequency; the most common shown, a group opens with a tap); each own account's bills a tap away with its own chips (the simulation's households each needed about two extra taps to reach them); help behind "How do I find my bills?". A household that lists every bill takes no more taps than before (the simulation's listed households: none up, 13 down).
+- **Budgets and savings by account**: setup's step 6 is drawn by account, as the bills step is, so the account comes from where you type rather than a select, with a spending-money chip for each person in households that pay into a joint account or where one person pays the bills (the simulation had 125 items starting in the wrong account).
+- Words and help: "Rough figure (bills)" in "Words Dovetail uses"; one line in "How Dovetail works". What's new: three lines; no existing household's figures change, and the lines say so.
+- An independent review of this release found, and it fixes before shipping: an account whose only use was a rough figure counted as unused, so closing it by a change of style left the figure on the closed account for good and Delete account moved it to the first other account without asking (both now ask where the figure goes); "Lower it" after deleting a bill left the figure lowered when the delete was undone (one Undo now puts back both); the paste reader read "13.25 March" as £13 and a month with no frequency word as part of the name; the delete offer and "Is that all of them?" weren't read out by screen readers; a boarder's own account was given the wrong reason for having no figure; and a few words.
+- Data: schema 5. New optional list `estimates` [{id, account, amount}], dated like bills, budgets, savings and income (`was`, `start`, `ended.estimates`), moved with its account by a change of style, kept by `normCfg` only when usable ("a rough figure that couldn't be used" otherwise) and stored only when there is one, so every existing household's settings are byte-identical. A backup or update file with a figure (live or ended) is version 6 and needs 2.14 (`backupNeedsFor`); a 2.13 phone refuses it with "This file needs Dovetail 2.14 or later. Update the app first."; files from households with no figure are exactly as 2.13 wrote them. The backup kept on the first open of a new version says the right `needs` too. No permission changes, no new dependencies.
+- Tests: `unit/v214.test.mjs` (the design's worked example, properties over 300 seeded households, `normCfg`, backups, the dated machinery, a change of style moving a figure, every helper, the checklist, `setupSettings`, Analysis and the exports, and the 36-month comparison with 2.13's own figures from `fixtures/sample36-2.13-calc.json`), `unit/paste.test.mjs`, `unit/sim-oracle.test.mjs`; the household simulation gained figure households (a figure of 0.7 to 1.3 times the truth with only the biggest bills listed, and one raised to what the household moves in) checked against an oracle written from the design alone, in `npm run sim`, `sim:full` and the history layer (bills listed over the year, the figure raised, ended, a bill deleted with the figure lowered or kept, each undone), and `sim:ui` types figure households through the real screens; `qa_figure.mjs` (the 25th page suite); and a real 2.13 → 2.14 update test (`RELEASE['2.13']`, from `7cc9964`), which also checks that 2.13 refuses a file with a figure.
+
 ## 2.13 (versionCode 22)
 The first release of the phase that followed the 2.12.1 stock take (`docs/stocktake/2.12.1-stocktake.md`, 21 October 2026; the owner adopted its product definition and chose this release's scope and decisions the same day). The aim: one coherent app that does the job for every household in the definition, before any Google Play or tester work. Built as seven tracks, each independently tested, then merged and reviewed. The owner's household (pooled, nothing dated) gives identical transfers, Analysis figures and exports (every saved and projected month compared; the golden tests unchanged).
 - **Changing how you manage your money keeps your accounts**: each answer is matched against the household's own accounts (a pure matcher in `calc.js`), so a joint spending account dropped by one answer comes back with the next, whatever order the answers come in, and a household with joint bills and joint spending starts on "separate joint accounts". Before, changing a household with those two accounts to "each paying into a joint account" closed its spending account, opened an empty twin and moved the spending budgets into the bills account; now nothing closes and nothing moves.

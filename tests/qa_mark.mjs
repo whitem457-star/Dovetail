@@ -8,12 +8,13 @@ const rgb = h => 'rgb(' + [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)).jo
 const LIGHT = ['#2a78d6', '#eda100', '#1baf7a', '#1baf7a'].map(rgb), DARK = ['#3987e5', '#c98500', '#199e70', '#199e70'].map(rgb);
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
-// A new install: the welcome step shows the mark above "Welcome to Dovetail"; later steps don't.
+// A new install: the welcome step shows the mark in the brand line above "Payday, without the guesswork" (2.18); later
+// steps don't.
 let { ctx, p } = await session({});
-check('Setup step 1 shows the mark above the title', await p.isVisible('#setup .su-mark') &&
-  await p.$eval('#setup .su-mark', m => m.nextElementSibling && m.nextElementSibling.id === 'suTitle'));
+check('Setup step 1 shows the mark in the brand line, directly before the title', await p.isVisible('#setup .su-mark') &&
+  await p.$eval('#setup .su-mark', m => { const b = m.closest('.su-brand'); return !!b && b.textContent.trim() === 'Dovetail' && !!b.nextElementSibling && b.nextElementSibling.id === 'suTitle'; }));
 check('…in the chart colours (light)', same(await strokes(p, '#setup .su-mark'), LIGHT), (await strokes(p, '#setup .su-mark')).join(' '));
-check('…hidden from screen readers, and the title is still the heading', await hidden(p, '#setup .su-mark') && (await p.textContent('#suTitle')) === 'Welcome to Dovetail');
+check('…hidden from screen readers, and the title is still the heading', await hidden(p, '#setup .su-mark') && (await p.textContent('#suTitle')) === 'Payday, without the guesswork');
 check('…with each stream clipped to its own half', await p.$eval('#setup .su-mark', s => [...s.querySelectorAll('path[clip-path]')].length === 2 &&
   [...s.querySelectorAll('path[clip-path]')].every(x => s.querySelector(x.getAttribute('clip-path').slice(4, -1)))));
 check('No axe violations on the welcome step', (await axe(p)).length === 0, (await axe(p)).join(' | '));

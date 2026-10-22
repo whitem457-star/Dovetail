@@ -12,6 +12,6 @@
     <string name="feedback_no_email">There\'s no email app on this phone. Write to %1$s.</string>
     <string name="share_export_title">Share Dovetail export</string>
     <string name="notify_channel">Reminders</string>
-    <string name="notify_channel_description">Payday tomorrow, bill renewals, your reminders and dated one-offs</string>
+    <string name="notify_channel_description">Payday or transfer day tomorrow, bill renewals, your reminders and dated one-offs</string>
     <string name="notify_public">You have a reminder</string>
 </resources>

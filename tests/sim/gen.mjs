@@ -2,8 +2,9 @@
 // board, other income, bills that come some months, households that can't cover their bills), the account each item is
 // meant for, and an independent oracle of what each person should pay and keep, written from the description of each
 // style in docs/plans/play-store.md, not from calc.js. Made-up names and amounts only.
+import fs from 'fs';
 export function rng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
-const NAMES = ['Alex', 'Sam', 'Kit', 'Robin', 'Jo', 'Ash', 'Charlie', 'Frankie', 'Jordan', 'Morgan', 'Riley', 'Casey', 'Jamie', 'Taylor', 'Drew', 'Lee', 'Max', 'Nico', 'Ola', 'Priya', 'Ravi', 'Wren', 'Zara', 'Bo'];
+export const NAMES = ['Alex', 'Sam', 'Kit', 'Robin', 'Jo', 'Ash', 'Charlie', 'Frankie', 'Jordan', 'Morgan', 'Riley', 'Casey', 'Jamie', 'Taylor', 'Drew', 'Lee', 'Max', 'Nico', 'Ola', 'Priya', 'Ravi', 'Wren', 'Zara', 'Bo'];
 export const r2 = x => Math.round((x + Number.EPSILON) * 100) / 100;
 
 export function makeHousehold(seed, force = {}) {
@@ -67,7 +68,10 @@ export function makeHousehold(seed, force = {}) {
   if (multi && chance(0.4)) { const i = Math.floor(R() * nPeople); if (board[i] == null) budgets.push({ name: 'Fuel ' + people[i].name, amount: between(60, 200, false), owner: i }); }
   if (chance(0.7)) savings.push({ name: 'Emergency fund', amount: between(25, 400, false), owner: style === 'separate' ? 0 : 'shared' });
   if (chance(0.3)) savings.push({ name: 'Holiday', amount: between(50, 250, false), owner: style === 'separate' ? 1 % nPeople : 'shared' });
-  return { seed, people, multi, style, pool, rule, ruleAsked, two, payer, set, fun, gets, board, income, payday, bills, budgets, savings };
+  const h = { seed, people, multi, style, pool, rule, ruleAsked, two, payer, set, fun, gets, board, income, payday, bills, budgets, savings };
+  // 2.16: pay patterns, drawn last and from their own seeded draws, so the households above are the same with or without them.
+  const share = force.patterns ?? (patternsOn() ? 0.2 : 0);
+  return share > 0 ? withPatterns(h, seed, share) : h;
 }
 
 /** An amount as a person types it: whole pounds as they are, otherwise with the pence. */
@@ -87,7 +91,8 @@ export function answersOf(h) {
   Object.keys(h.gets).forEach(k => { ans.gets[id(k)] = 'yes'; ans.getsAmt[id(k)] = money(h.gets[k]); });
   if (h.rule === 'set' && h.set) h.people.forEach((p, i) => { if (h.board[i] == null) ans.set[id(i)] = money(h.set[i] || 0); });
   const pd = h.payday;
-  return { people: h.people.map((p, i) => ({ id: id(i), name: p.name, pay: p.pay > 0 ? money(p.pay) : '', payAccount: null })),
+  // 2.16: someone paid weekly, every two weeks or every four weeks types their pay each time, with how often (every).
+  return { people: h.people.map((p, i) => Object.assign({ id: id(i), name: p.name, pay: p.every ? money(p.each) : p.pay > 0 ? money(p.pay) : '', payAccount: null }, p.every ? { every: p.every } : {})),
     income: h.income.map((x, i) => ({ id: x.id || 'i' + i, name: x.name, amount: money(x.amount), account: null })),
     sameDay: h.multi && pd ? pd.same : null, payday: pd ? { day: String(pd.day), weekend: pd.day === 'last' || pd.weekend } : { day: '', weekend: true }, skip: pd ? {} : { 3: true },
     shape: null, style: h.multi ? h.style : null, pool: h.pool, ans, accounts: [], bills: {}, budgets: [], savings: [] };
@@ -138,6 +143,8 @@ export function oracle(h, m, payNow, ones = []) {
   const cost = { shared: 0, sharedBills: 0, sharedSpend: 0 }, own = Array(n).fill(0);
   h.bills.forEach(b => { if (!due(b)) return; if (b.owner === 'shared') { cost.shared += b.amount; cost.sharedBills += b.amount; } else own[b.owner] += b.amount; });
   [...h.budgets, ...h.savings].forEach(x => { if (x.owner === 'shared') { cost.shared += x.amount; cost.sharedSpend += x.amount; } else own[x.owner] += x.amount; });
+  // 2.14: what an account's rough figure covers that isn't listed yet is money out of it, the same every month, like a bill.
+  figureExtras(h).forEach(e => { if (e.owner === 'shared') { cost.shared += e.amount; cost.sharedBills += e.amount; } else own[e.owner] += e.amount; });
   // One-offs (2.13 simulation): a payment out of an account is a cost of whoever's account it is this month, money in is
   // the same with the sign the other way (it lowers what that account needs).
   ones.forEach(o => { const v = o.kind === 'in' ? -o.amount : o.amount;
@@ -210,7 +217,7 @@ export const incomeName = h => h.multi && h.style === 'separate' ? h.people[0].n
     money as budgets each person owns (the oracle counts both the same way, and a change of style keeps them as budgets). */
 export function withIds(h) {
   const x = JSON.parse(JSON.stringify(h));
-  x.bills.forEach((b, i) => { b.id = 'b' + i; }); x.budgets.forEach((b, i) => { b.id = 'g' + i; }); x.savings.forEach((b, i) => { b.id = 's' + i; }); x.income.forEach((b, i) => { b.id = 'i' + i; });
+  x.bills.forEach((b, i) => { b.id ||= 'b' + i; }); x.budgets.forEach((b, i) => { b.id = 'g' + i; }); x.savings.forEach((b, i) => { b.id = 's' + i; }); x.income.forEach((b, i) => { b.id = 'i' + i; });
   if (x.fun) x.fun.forEach((v, i) => { if (v > 0) x.budgets.push({ id: 'f' + i, name: x.people[i].name + "'s spending money", amount: v, owner: i }); });
   x.fun = null; x.ticked = x.ticked || {};
   return x;
@@ -299,6 +306,8 @@ export function chainOracle(h, m, payNow, ones = []) {
   const add = (name, up) => { if (!(name in parent)) { acc.push(name); parent[name] = up; } };
   if (!h.multi) {
     if (kind === 'own') { add('Bills account', 'Spending account'); add('Spending account', null); }
+    // 2.16, E17: one person with a pay pattern gets Bills topped up from the pay account, which moves what's left on.
+    else if (kind === 'split' && topsUpBills(h)) { add('Bills account', 'Pay account'); add('Pay account', 'Spending account'); add('Spending account', null); }
     else if (kind === 'split') { add('Pay account', 'Bills account'); add('Bills account', 'Spending account'); add('Spending account', null); }
     else return null;
   } else if (kind === 'own') { h.people.forEach((p, i) => add(P(i), 'Joint account')); add('Joint account', null); }
@@ -313,6 +322,7 @@ export function chainOracle(h, m, payNow, ones = []) {
   h.bills.forEach(b => { if (due(b)) out[intendedAccount(h, b, 'bills')] += b.amount; });
   h.budgets.forEach(b => { out[intendedAccount(h, b, 'budgets')] += b.amount; });
   h.savings.forEach(b => { out[intendedAccount(h, b, 'savings')] += b.amount; });
+  figureExtras(h).forEach(e => { out[e.account] += e.amount; });
   if (h.fun) h.fun.forEach((v, i) => { out[intendedAccount(h, { owner: i }, 'budgets')] += v; });
   ones.forEach(o => { if (o.kind === 'in') inn[oneOffAccount(h, o)] += o.amount; else out[oneOffAccount(h, o)] += o.amount; });
   const depth = a => { let d = 0, x = parent[a]; while (x) { d++; x = parent[x]; } return d; };
@@ -325,4 +335,321 @@ export function chainOracle(h, m, payNow, ones = []) {
     if (want - send > 0.004) { held[a] -= want - send; held[up] += want - send; } bal[up] -= send; bal[a] += send; });
   const keeps = {}; acc.forEach(a => { if (!parent[a]) keeps[a] = { amt: sub[a] + held[a] }; else if (Math.abs(held[a]) > 0.004) keeps[a] = { amt: held[a], short: true }; });
   return keeps;
+}
+
+// ---------- The rough figure (2.14) ----------
+// Written from docs/onboarding.md (5.2 the rule, 5.9 where a figure is allowed, 7 what to simulate), not from calc.js.
+// A household with a figure has h.figures [{id, owner, amount}] (owner: "shared" or a person, whose bills' account the
+// figure is for; two on one account add up), h.bills with only the bills that are listed, and h.hidden with the rest of
+// what the household really pays (the "truth", never in the settings). h.figureKind: "figure", or "anchor" (the figure
+// raised to what the household moves in, modelled as the true total).
+
+/** Whether a bill is counted inside its account's figure: it comes in every month or in 7 or more months a year. */
+export const inFigure = b => { const n = billMonths(b).length; return n === 0 || n >= 7; };
+
+/** The rule, per account (5.2). For each account with a figure: {account, owner, figure, listed, amount}, where listed is
+    the amounts of its listed bills that come in every month or in 7 or more (whether or not they're due this month) and
+    amount, "not listed yet", is the figure less that, never below £0: the same every month. */
+export function figureExtras(h) {
+  const by = {};
+  (h.figures || []).forEach(f => { const a = intendedAccount(h, { owner: f.owner }, 'bills'); (by[a] ||= { account: a, owner: f.owner, figure: 0 }).figure += f.amount; });
+  return Object.values(by).map(x => { x.figure = r2(x.figure);
+    x.listed = r2(h.bills.filter(b => inFigure(b) && intendedAccount(h, b, 'bills') === x.account).reduce((s, b) => s + b.amount, 0));
+    x.amount = Math.max(0, r2(x.figure - x.listed)); return x; });
+}
+
+/** An account's bills in month m: not listed yet plus the listed bills actually due that month (every bill, whatever its
+    months). The worked example in 5.2 is checked against this in tests/unit/sim-oracle.test.mjs. */
+export function billsOut(h, account, m) {
+  const x = figureExtras(h).find(e => e.account === account);
+  return r2((x ? x.amount : 0) + h.bills.filter(b => intendedAccount(h, b, 'bills') === account && applies({ months: billMonths(b) }, m)).reduce((s, b) => s + b.amount, 0));
+}
+
+/** The household with every bill listed and no figure: what the oracle (and the settings) would be without the figure. */
+export function fullListed(h) {
+  const x = JSON.parse(JSON.stringify(h)), n = b => Number(String(b.id).replace(/^\D+/, ''));
+  x.bills = x.bills.concat(x.hidden || []).sort((a, b) => n(a) - n(b)); x.hidden = []; x.figures = []; x.figureKind = 'listed'; return x;
+}
+
+/** Where a figure is allowed (5.9): not on a boarder's own account (it's outside the household's figures), and not on
+    someone's own account when they pay a share into another account under "in proportion to what's left after own bills"
+    or "so we each keep the same" (a generous guess would shift cost to their partner). */
+export function figureAllowed(h, account) {
+  return !h.people.some((p, i) => account === p.name + "'s account" && (h.board[i] != null || (h.ticked && h.ticked[i])
+    || (h.multi && ['contribute', 'housekeeping'].includes(h.style) && ['afterOwn', 'sameLeft'].includes(h.rule) && !(h.style === 'housekeeping' && i === h.payer))));
+}
+
+/** Make household h (from makeHousehold) one that starts from a rough figure, with its own seeded draws so makeHousehold's
+    households are untouched. kind: "figure", "anchor" or "listed" (returned as it is); left out, one is drawn (listed
+    about a quarter of the time). Per account bills come out of: with some probability a figure of the true monthly total
+    of its 7-plus-month bills x 0.7 to 1.3, to £10 (sometimes exactly the total, sometimes £0 or blank: none), and only
+    the biggest 0 to 100% of its bills listed (the rest are only in h.hidden). An anchor's figure is raised to the true
+    total, what the household moves into the account. Accounts a figure isn't allowed on list everything. */
+export function withFigures(h, seed, kind) {
+  const R = rng(seed * 104729 + 31), chance = p => R() < p;
+  const k = kind ?? (R() < 0.25 ? 'listed' : R() < 0.55 ? 'figure' : 'anchor');
+  if (k === 'listed') return h;
+  const x = JSON.parse(JSON.stringify(h)); x.bills.forEach((b, i) => { b.id ||= 'b' + i; });
+  x.figureKind = k; x.figures = []; x.hidden = []; x.truth = [];
+  // Boundary bills, which makeHousehold has none of: some that come in 6, 7 or 8 months a year (6 is never inside a figure, 7 is).
+  [...new Set(x.bills.map(b => intendedAccount(x, b, 'bills')))].forEach(a => { if (!chance(0.3)) return; const owner = x.bills.find(b => intendedAccount(x, b, 'bills') === a).owner, n = 6 + Math.floor(R() * 3), st = 1 + Math.floor(R() * 12);
+    x.bills.push({ id: 'b' + x.bills.length, name: n === 6 ? 'Boiler cover' : 'Seasonal bill', amount: r2(15 + R() * 80), freq: 'some', picked: Array.from({ length: n }, (_, i) => 1 + (st - 1 + i) % 12), owner }); });
+  const accounts = [...new Set(x.bills.map(b => intendedAccount(x, b, 'bills')))], hid = new Set();
+  accounts.forEach(a => {
+    const mine = x.bills.filter(b => intendedAccount(x, b, 'bills') === a), true7 = r2(mine.filter(inFigure).reduce((s, b) => s + b.amount, 0));
+    if (!figureAllowed(x, a) || !chance(0.85)) { x.truth.push({ account: a, true7, figure: 0, rough: 0, bills: mine.length, listed: mine.length }); return; }
+    const u = R(); let fig = u < 0.1 ? 0 : u < 0.2 ? true7 : Math.round(true7 * (0.7 + R() * 0.6) / 10) * 10;
+    const rough = fig; // what the household first thought of; an anchor is raised from it to what it moves in
+    if (k === 'anchor') fig = Math.max(fig, true7);
+    const frac = chance(0.15) ? 0 : chance(0.2) ? 1 : R(), nListed = Math.round(frac * mine.length);
+    mine.slice().sort((p, q) => q.amount - p.amount).slice(nListed).forEach(b => hid.add(b));
+    fig = r2(fig);
+    if (fig > 0) { const owner = mine[0].owner, split = chance(0.1) && fig >= 20, first = split ? r2(fig * 0.6) : fig;
+      x.figures.push({ id: 'e' + x.figures.length, owner, amount: first }); if (split) x.figures.push({ id: 'e' + x.figures.length, owner, amount: r2(fig - first) }); }
+    x.truth.push({ account: a, true7, figure: fig, rough: r2(rough), bills: mine.length, listed: mine.length - mine.filter(b => hid.has(b)).length });
+  });
+  x.hidden = x.bills.filter(b => hid.has(b)); x.bills = x.bills.filter(b => !hid.has(b));
+  return x;
+}
+
+// ---------- Pay patterns (2.16) ----------
+// Written from docs/payperiods.md (5.3.1 data, 5.3.3 the pay a month plans on, 5.3.4 the extra payday, 5.3.5 money styles,
+// section 7's simulation column) and section 11.2 (E6–E17), not from calc.js. A person on a pattern has every (7, 14 or 28:
+// days between paydays) and each (take-home pay each time); their pay stays a month's usual pay, worked out from each.
+
+/** Paydays a year and in a usual month, by days between paydays (5.3.1's PAY_EVERY, written out again here). */
+export const PAY_YEAR = { 7: 52, 14: 26, 28: 13 }, PAY_N = { 7: 4, 14: 2, 28: 1 };
+/** Whether households get patterns: on by default; SIM_PATTERNS=0 leaves them out (a run without them says so). */
+export const patternsOn = () => process.env.SIM_PATTERNS ? process.env.SIM_PATTERNS !== '0' : true;
+export const patternNote = 'Pay patterns: not run (SIM_PATTERNS=0)';
+/** A month's usual pay for a person as the spec has them ({pay}, or {every, each}): over a year ÷ 12, to the penny (5.3.1). */
+export const monthlyOf = s => s.every ? r2(s.each * PAY_YEAR[s.every] / 12) : s.pay;
+/** Whether anyone in spec h is paid on a pattern. */
+export const hasPattern = h => h.people.some(p => p.every);
+/** E17: one person on a pattern who picks "My pay account, a bills account and a spending account" gets Bills topped up
+    from the pay account (Bills → Pay account → Spending). A spec can say otherwise (h.e17, after a change of style). */
+export const topsUpBills = h => h.e17 ?? (!h.multi && h.pool === 'split' && !!h.people[0].every);
+
+/** Household h with about `share` of the people who have pay on a pattern: every 7, 14 or 28 days, each = their monthly pay
+    × 12 ÷ paydays a year, to the penny, and their pay the month's usual pay that gives (so the oracle's weight is
+    usualMonthly). A household with a pattern always has a transfer day (setup won't skip step 3 then). Own seeded draws. */
+export function withPatterns(h, seed, share = 0.2) {
+  const R = rng(seed * 7907 + 101), x = JSON.parse(JSON.stringify(h));
+  x.people.forEach(p => { if (!(p.pay > 0) || R() >= share) return; const every = [7, 14, 28][Math.floor(R() * 3)];
+    p.every = every; p.each = r2(p.pay * 12 / PAY_YEAR[every]); p.pay = monthlyOf(p); });
+  if (hasPattern(x) && !x.payday) x.payday = { day: [1, 15, 20, 25, 28, 'last', 31][Math.floor(R() * 7)], same: R() < 0.7, weekend: R() < 0.85 };
+  return x;
+}
+
+/** What month m plans on for person i (5.3.3 and E7), from the spec's months pm (payMonthsFor) and stateAt(i, m), the
+    person as they were that month ({pay}, or {every, each, pay}): {arrived, setAside, used, typed}.
+    - Arrived: what was saved for the month (typed, or an estimate saved by a tick); otherwise, on a pattern, each × N (never
+      an earlier month's total); otherwise the latest month typed while they were paid monthly, else their usual pay then.
+    - Set aside: an extra payday's amount, only for typed pay on a pattern and only when it isn't counted; otherwise 0.
+    - Used: arrived less set aside, never below 0. */
+export function planOracle(pm, stateAt, i, m) {
+  const s = stateAt(i, m), d = (pm[m] || [])[i] || {}, typed = d.pay != null && !d.est;
+  let arrived;
+  if (d.pay != null) arrived = d.pay;
+  else if (s.every) arrived = r2(s.each * PAY_N[s.every]);
+  else { arrived = s.pay; for (let j = m - 1; j >= 1; j--) { const e = (pm[j] || [])[i]; if (e && e.pay != null && !e.est && !stateAt(i, j).every) { arrived = e.pay; break; } } }
+  const setAside = typed && s.every && d.extra && !d.extra.counted ? d.extra.amount : 0;
+  return { arrived, setAside, used: Math.max(0, r2(arrived - setAside)), typed };
+}
+
+/** The pay side of twelve saved months for spec h: pm[m][i] = {pay (number or null), est (saved by a tick before pay was
+    typed), extra ({amount, counted?} or null)}. About a quarter of people never type their pay; the rest type it in a bit
+    under half the months. On a pattern, a typed month holds N paydays, or N + 1 a quarter of the time: then the extra is set
+    aside, counted or left in, at random (about one pay each time, sometimes a little more or less). Now and then an extra is
+    saved on a month that isn't typed (E7: it sets nothing aside), and rarely one larger than what arrived (used is then 0). A month saved by a
+    tick holds the estimate of the time. stateAt(i, m) as planOracle's (default: the person as h has them). Own draws. */
+export function payMonthsFor(h, seed, stateAt) {
+  stateAt ||= i => h.people[i];
+  const R = rng(seed * 6007 + 29), pm = [], never = h.people.map(() => R() < 0.25);
+  for (let m = 1; m <= 12; m++) pm[m] = h.people.map((p, i) => {
+    const s = stateAt(i, m), d = { pay: null, est: false, extra: null }, x = R();
+    if (!(p.pay > 0) || never[i]) return d;
+    if (x < 0.45) {
+      if (s.every) {
+        const N = PAY_N[s.every], k = R() < 0.25 ? N + 1 : N; let sum = 0; for (let j = 0; j < k; j++) sum += r2(s.each * (0.9 + R() * 0.2)); d.pay = r2(sum);
+        if (k > N) { const u = R(); if (u < 0.75) d.extra = Object.assign({ amount: R() < 0.7 ? s.each : r2(s.each * (0.8 + R() * 0.4)) }, u < 0.35 ? { counted: true } : {}); }
+        else if (R() < 0.01) d.extra = { amount: r2(d.pay + s.each) };
+      } else d.pay = r2(s.pay * (0.85 + R() * 0.3));
+    } else if (x < 0.52) d.est = true;
+    else if (s.every && R() < 0.05) d.extra = { amount: s.each };
+    return d; });
+  for (let m = 1; m <= 12; m++) pm[m].forEach((d, i) => { if (d.est) d.pay = planOracle(pm, stateAt, i, m).arrived; });
+  return pm;
+}
+
+/** The saved months (payday.months.v1) for settings c from pm, with one-offs: ones[m] = [{id, kind, name, amount, account}]
+    (account ids). Months with nothing saved are left out. */
+export function monthsObj(c, pm, ones = {}) {
+  const out = {};
+  for (let m = 1; m <= 12; m++) {
+    const k = '2027-' + String(m).padStart(2, '0'), d = {};
+    (pm[m] || []).forEach((e, i) => { const id = c.people[i].id;
+      if (e.pay != null) (d.pay ||= {})[id] = e.pay;
+      if (e.est) (d.payEstimated ||= {})[id] = true;
+      if (e.extra) (d.extra ||= {})[id] = Object.assign({ amount: e.extra.amount }, e.extra.counted ? { counted: true } : {}); });
+    if ((ones[m] || []).length) d.oneOffs = ones[m].map(o => ({ ...o }));
+    if (Object.keys(d).length) out[k] = d;
+  }
+  return out;
+}
+
+// ---------- Counting paydays (2.17, layer 2) ----------
+// Written from docs/payperiods.md section 13 (13.1 H1–H2: how a date moves for weekends and bank holidays; 13.2 L1–L19:
+// layer 2), 5.4–5.6 and model.md 3–4, not from calc.js. Dates are day numbers (0 = 1 January 1970) with their own
+// arithmetic, never Date. Bank holidays: gov.uk's England and Wales list for 2024–2028 (the fixture), and outside those
+// years H1's rule worked out here (Easter by Gauss's method, not the computus calc.js uses).
+
+/** Day number of y-m-d (m 1–12): days counted from 1 March of year 0, so the leap day comes last. */
+export function civilDays(y, m, d) { const yy = m <= 2 ? y - 1 : y, mm = m <= 2 ? m + 9 : m - 3;
+  return 365 * yy + Math.floor(yy / 4) - Math.floor(yy / 100) + Math.floor(yy / 400) + Math.floor((153 * mm + 2) / 5) + d - 1 - 719468; }
+export const dayNum = s => { const [y, m, d] = s.split('-').map(Number); return civilDays(y, m, d); };
+const p2 = n => String(n).padStart(2, '0');
+const yearOfDay = z => { let y = Math.floor(z / 365.2425) + 1970; while (civilDays(y, 1, 1) > z) y--; while (civilDays(y + 1, 1, 1) <= z) y++; return y; };
+/** "YYYY-MM-DD" for day number z (the year by estimate and correction, then the month). */
+export function dayStr(z) {
+  const y = yearOfDay(z); let m = 1; while (m < 12 && civilDays(y, m + 1, 1) <= z) m++;
+  return y + '-' + p2(m) + '-' + p2(z - civilDays(y, m, 1) + 1);
+}
+/** 0 Sunday … 6 Saturday (1 January 1970 was a Thursday). */
+export const weekday = z => ((z + 4) % 7 + 7) % 7;
+const leapYear = y => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+export const monthDays = (y, m) => [31, leapYear(y) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1];
+/** Month "YYYY-MM" moved on by j months. */
+export const shiftK = (k, j) => { const [y, mo] = k.split('-').map(Number), t = y * 12 + (mo - 1) + j; return Math.floor(t / 12) + '-' + p2(t % 12 + 1); };
+/** Easter Sunday by Gauss's method with its two exceptions (a day number). */
+export function easterGauss(y) {
+  const a = y % 19, b = y % 4, c = y % 7, k = Math.floor(y / 100), p = Math.floor((13 + 8 * k) / 25), q = Math.floor(k / 4);
+  const M = ((15 - p + k - q) % 30 + 30) % 30, N = ((4 + k - q) % 7 + 7) % 7, d = (19 * a + M) % 30, e = (2 * b + 4 * c + 6 * d + N) % 7;
+  if (d === 29 && e === 6) return civilDays(y, 4, 19);
+  if (d === 28 && e === 6 && (11 * M + 11) % 30 < 19) return civilDays(y, 4, 18);
+  return civilDays(y, 3, 22) + d + e;
+}
+/** England and Wales bank holidays in year y by H1's rule (day numbers, sorted): New Year's Day, Good Friday, Easter
+    Monday, the first and last Mondays in May, the last Monday in August, Christmas Day and Boxing Day, each on a weekend
+    moved to the next weekday that isn't already one. */
+export function holidaysByRule(y) {
+  const out = new Set(), mon = z => weekday(z) === 1;
+  const free = z => { while (weekday(z) === 0 || weekday(z) === 6 || out.has(z)) z++; return z; };
+  let z; out.add(free(civilDays(y, 1, 1)));
+  const e = easterGauss(y); out.add(e - 2); out.add(e + 1);
+  for (z = civilDays(y, 5, 1); !mon(z); z++); out.add(z);
+  for (z = civilDays(y, 5, 31); !mon(z); z--); out.add(z);
+  for (z = civilDays(y, 8, 31); !mon(z); z--); out.add(z);
+  out.add(free(civilDays(y, 12, 25))); out.add(free(civilDays(y, 12, 26)));
+  return [...out].sort((a, b) => a - b);
+}
+const GOVUK_FILE = JSON.parse(fs.readFileSync(new URL('../fixtures/govuk-bank-holidays-ew-2024-2028.json', import.meta.url), 'utf8'));
+/** gov.uk's dates by year (day numbers), for the years the fixture covers. */
+export const GOVUK = (() => { const o = {}; for (let y = GOVUK_FILE.years[0]; y <= GOVUK_FILE.years[1]; y++) o[y] = []; GOVUK_FILE.dates.forEach(x => o[Number(x.date.slice(0, 4))].push(dayNum(x.date))); return o; })();
+const lastFriday = (y, m) => { let z = civilDays(y, m, monthDays(y, m)); while (weekday(z) !== 5) z--; return z; };
+/** A bank holiday calendar. mode "real": gov.uk's list for 2024–2028, the rule outside; "none": no holidays (the rule
+    switched off); "madeup": the real ones plus the last Friday of every month (a made-up holiday that lands on paydays and
+    transfer days). {mode, has(z), list(y) ("YYYY-MM-DD", sorted)}. */
+export function holidayCal(mode = 'real') {
+  const memo = new Map(), year = y => { if (!memo.has(y)) { let s = new Set();
+    if (mode !== 'none') { s = new Set(GOVUK[y] || holidaysByRule(y)); if (mode === 'madeup') for (let m = 1; m <= 12; m++) s.add(lastFriday(y, m)); }
+    memo.set(y, s); } return memo.get(y); };
+  return { mode, has: z => year(yearOfDay(z)).has(z), list: y => [...year(y)].sort((a, b) => a - b).map(dayStr) };
+}
+/** The working day on or before day z: back one day at a time past weekends and bank holidays. */
+export function moveBack(z, cal) { let g = 0; while ((weekday(z) === 0 || weekday(z) === 6 || cal.has(z)) && g++ < 30) z--; return z; }
+/** The transfer day for month k as 13.1 H2 has it (a day number), or null without one: a day from the 15th on (or
+    "last") is in the month before; the day is capped at the month's length, then "last" always moves to the working day
+    on or before it, and a numbered day does unless weekend is false. */
+export function transferDayOracle(pc, k, cal) {
+  if (!pc || !pc.day) return null;
+  let [y, m] = k.split('-').map(Number);
+  if (pc.day === 'last' || Number(pc.day) >= 15) { m--; if (m < 1) { m = 12; y--; } }
+  if (pc.day === 'last') return moveBack(civilDays(y, m, monthDays(y, m)), cal);
+  const z = civilDays(y, m, Math.min(Number(pc.day), monthDays(y, m)));
+  return pc.weekend === false ? z : moveBack(z, cal);
+}
+/** L8: with no transfer day, the windows use the 25th, not moved. */
+export const FALLBACK_DAY = { day: 25, weekend: false };
+/** Month k's window (L8): after the transfer day before it, up to and including its own (day numbers). */
+export function windowOracle(pc, k, cal) { const q = pc && pc.day ? pc : FALLBACK_DAY; return { after: transferDayOracle(q, shiftK(k, -1), cal), upTo: transferDayOracle(q, k, cal) }; }
+/** The paydays counted in (after, upTo] (L8) for pattern {every, on, since?}: every on + j × every (any whole j), each
+    moved to the working day on or before it, counted when after < moved ≤ upTo and, with since, moved ≥ since moved the
+    same way (L20: since is stored as typed, and compared on the working day on or before it). L21: since only applies to
+    a window that reaches it; a window that ends before the moved since counts as if there were none (and in a window
+    after it, it removes nothing anyway). "YYYY-MM-DD", in order. */
+export function countOracle(pt, after, upTo, cal) {
+  const O = dayNum(pt.on), E = pt.every, S0 = pt.since ? moveBack(dayNum(pt.since), cal) : null, S = S0 != null && upTo >= S0 ? S0 : null, out = [];
+  for (let j = Math.ceil((after + 1 - O) / E); O + j * E <= upTo + 12; j++) { const a = moveBack(O + j * E, cal); if (a > after && a <= upTo && (S == null || a >= S)) out.push(a); }
+  return out.sort((a, b) => a - b).map(dayStr);
+}
+
+/** Household h (with patterns) with layer 2's dates, from its own seeded draws (so every other household is untouched):
+    about three in four people on a pattern get `on`, a payday as it usually falls (a Friday more often than not, shifted
+    by a random whole number of intervals: any payday in the series will do); about one in seven of them a `since` (a new
+    job: a payday in the series in the first eight months, typed a few days early one time in four, as paid; then `on`
+    is that payday half the time, as the change sheet sets both); about one in seven adds the date only from a later month (dateFrom, a month index: months saved before it
+    stay in layer 1, M6). At least one person gets a date. h.start: the first of 24 months (November 2026 three times in
+    four, otherwise a month in 2029–2040, where the rule stands in for gov.uk's list); h.noTransferDay: a damaged file
+    with no transfer day (one in fifteen), whose windows use the 25th (L8). opts.start: the first month, given. */
+export function withDates(h, seed, opts = {}) {
+  const R = rng(seed * 6151 + 3), chance = p => R() < p, x = JSON.parse(JSON.stringify(h));
+  x.start = chance(0.75) ? '2026-11' : (2029 + Math.floor(R() * 12)) + '-' + p2(1 + Math.floor(R() * 12));
+  if (opts.start) x.start = opts.start;
+  const base = dayNum(x.start + '-01');
+  const date = p => { const want = chance(0.6) ? 5 : 1 + Math.floor(R() * 5); let z = base - 40 + Math.floor(R() * 7); while (weekday(z) !== want) z++;
+    return z + 7 * Math.floor(R() * (p.every / 7)); };
+  const dated = []; x.people.forEach((p, i) => { if (!p.every) return; const z = date(p), on = chance(0.75); dated.push([i, z, on]); });
+  if (dated.length && !dated.some(d => d[2])) dated[0][2] = true;
+  dated.forEach(([i, z, on]) => { const p = x.people[i]; if (!on) return;
+    p.on = dayStr(z + p.every * (Math.floor(R() * 41) - 20));
+    if (chance(0.15)) { const first = z + p.every * Math.floor(R() * Math.ceil(240 / p.every));
+      // The first pay as the payslip dates it, or (one time in four) as it was paid, up to three days earlier (L20).
+      p.since = dayStr(first - (chance(0.25) ? 1 + Math.floor(R() * 3) : 0)); if (chance(0.5)) p.on = dayStr(first); }
+    if (chance(0.15)) p.dateFrom = 3 + Math.floor(R() * 13); });
+  x.noTransferDay = chance(1 / 15);
+  return x;
+}
+
+/** A settings person as layer 2 reads them: {id, every, each, n, on, since} (every null: paid every month). since only
+    with on (L13). */
+export function datedPerson(p) { const t = p && p.pattern;
+  return t && PAY_N[t.every] && t.each > 0 ? { id: p.id, every: t.every, each: t.each, n: PAY_N[t.every], on: t.on || null, since: t.on && t.since ? t.since : null } : { id: p && p.id, every: null }; }
+const has = (o, k) => !!(o && o[k] != null);
+/** The default set aside (L3): r2(A × (M − N) ÷ M), A the typed pay, or each × M when a tick filled the box. */
+export const defaultAside = (q, d, pid, M) => { const A = d.payEstimated && d.payEstimated[pid] ? q.each * M : d.pay[pid]; return r2(A * (M - q.n) / M); };
+/** What a save of month body `body` should store (L3), the month as saved before being `old` (or undefined): for each
+    person on a pattern, the freeze when their box goes from empty to a figure (typed or ticked), they have a date and no
+    count is stored (paydays = M counted now; an extra already there is the household's and is marked edited, L22; else
+    one of the default when M > N); then, when the
+    count is above N and the extra has no `edited` and isn't locked (L6), its amount follows the box. people: datedPerson
+    for each person that month; count(pid): M counted now; locked(pid): a one-off marks this month's extra as used;
+    own(pid): whether an extra already there is the household's (default yes; L22's one exception is a counted line the
+    count opened, frozen again after a change of interval, which stays the count's). A new object; body isn't changed. */
+export function freezeOracle(people, body, old, count, locked, own = () => true) {
+  const d = JSON.parse(JSON.stringify(body));
+  people.forEach(q => { if (!q.every) return; const pid = q.id, box = has(d.pay, pid);
+    if (box && !has(old && old.pay, pid) && q.on && !has(d.paydays, pid)) { const M = count(pid); (d.paydays ||= {})[pid] = M;
+      // L22 (a): an extra already there (the household's own, from "Had an extra payday?") is marked edited and never
+      // rewritten; only an entry the freeze creates follows typed pay.
+      if (d.extra && d.extra[pid]) { if (own(pid)) d.extra[pid] = Object.assign({}, d.extra[pid], { edited: true }); }
+      else if (M > q.n) (d.extra ||= {})[pid] = { amount: defaultAside(q, d, pid, M) }; }
+    const M = d.paydays && d.paydays[pid], x = d.extra && d.extra[pid];
+    if (box && M != null && M > q.n && x && !x.edited && !locked(pid)) x.amount = defaultAside(q, d, pid, M); });
+  return d;
+}
+/** What planPay should give person q (datedPerson) in month body d (L1, L2, L9): a typed or ticked month reads only
+    what's stored, with 2.16's rules (set aside only for typed pay, unless counted; used = arrived − set aside, never below
+    0); an untyped month for someone with a date plans on each × min(M, N), M stored or else counted now (Mnow), nothing
+    set aside, and gives layer 2, m, expected (each × M) and extraDefault (each × max(0, M − N)); without a date, or with
+    typical, each × N (layer 1 without a date). monthlyEst: the estimate for someone paid every month. */
+export function planOracle2(q, d, Mnow, monthlyEst, typical = false) {
+  const pid = q.id, box = has(d.pay, pid), typed = box && !(d.payEstimated && d.payEstimated[pid]);
+  if (!q.every) { const v = box ? d.pay[pid] : monthlyEst; return { arrived: v, setAside: 0, used: v, typed }; }
+  if (box) { const v = d.pay[pid], x = d.extra && d.extra[pid], aside = typed && x && x.counted !== true ? Math.max(0, x.amount) : 0;
+    return { arrived: v, setAside: aside, used: aside ? Math.max(0, r2(v - aside)) : v, typed, m: has(d.paydays, pid) ? d.paydays[pid] : undefined }; }
+  // Layer 1 (no date): exactly 2.16's entry, with no layer (the head of engineering's ruling: the absence of layer means 1).
+  if (typical || !q.on) { const v = r2(q.each * q.n); return { arrived: v, setAside: 0, used: v, typed: false }; }
+  const M = has(d.paydays, pid) ? d.paydays[pid] : Mnow, v = r2(q.each * Math.min(M, q.n));
+  return { arrived: v, setAside: 0, used: v, typed: false, layer: 2, m: M, expected: r2(q.each * M), extraDefault: r2(q.each * Math.max(0, M - q.n)) };
 }

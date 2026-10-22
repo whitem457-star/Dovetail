@@ -120,8 +120,9 @@ test('notification schedule: payday tomorrow, due soon and due day, one-offs the
   const months = { '2026-11': { pay: {}, done: {}, oneOffs: [{ id: 'cs', kind: 'out', name: 'Car service', amount: 185, account: 'joint', date: '2026-11-12' }, { id: 'rf', kind: 'in', name: 'Refund', amount: 60, account: 'joint', date: '2026-10-15' }] } };
   const s = P.notificationSchedule(c, months, '2026-10-15');
   const by = k => s.filter(e => e.key.startsWith(k));
-  // (a) the day before each payday in the next 90 days (to 12 Jan 2027): Wed 28 Oct, Fri 27 Nov (28th is a Saturday), Mon 28 Dec
-  assert.deepEqual(by('pay:').map(e => e.date), ['2026-10-27', '2026-11-26', '2026-12-27']);
+  // (a) the day before each payday in the next 90 days (to 12 Jan 2027): Wed 28 Oct, Fri 27 Nov (28th is a Saturday), Thu 24 Dec
+  // 2.16.1 changed the last on purpose: Mon 28 Dec 2026 is the Boxing Day bank holiday, so the payday is Thu 24 Dec.
+  assert.deepEqual(by('pay:').map(e => e.date), ['2026-10-27', '2026-11-26', '2026-12-23']);
   const p1 = by('pay:')[0];
   assert.equal(p1.title, 'Payday tomorrow');
   assert.equal(p1.text, 'Wed 28 Oct 2026 pays for November 2026. 1 transfer to make.');

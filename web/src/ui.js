@@ -1,5 +1,5 @@
 /* Dovetail: the page (DOM, storage, Android bridge). Uses the pure functions in calc.js, migrate.js and analysis.js. */
-var VERSION="2.13",SCHEMA=5,BACKUP_VERSION=6;
+var VERSION="2.18",SCHEMA=5,BACKUP_VERSION=6;
 /* ---------- constants & helpers ---------- */
 /* COLOURS (account colours) is in calc.js, which setup's pure helpers share. */
 function $(id){return document.getElementById(id)}
@@ -136,6 +136,8 @@ function thisMonth(){return defaultMonth(payCfg())}
    months too. A household with no saved months yet changes every month, as before. */
 function datesEdits(){return hasHistory(months,thisMonth())}
 function dated(list,x,before,from){var k=thisMonth();if(datesEdits())dateEdit(list,x,before,from&&from>k?from:k)}
+/* 2.15: the same for a person's usual pay (before = personSnap before the edit), from the month the app opens on. */
+function datedPay(p,before){if(datesEdits())datePersonEdit(p,before,thisMonth())}
 function startsNow(x){if(datesEdits())x.start=thisMonth();return x}
 /* 2.13: where keyboard focus goes after an item in a list is deleted (the list is drawn again): the next item in the
    list, else the one before, else fallback (the list's "Add" button). Returns a selector, worked out before the delete. */
@@ -148,16 +150,23 @@ function removeItem(list,x,msg,after,focusSel){var k=thisMonth(),dates=datesEdit
   if(syncCount!==sc0)return; // the save was refused because another copy had newer data: nothing to undo
   offerUndo(msg+(dates&&!(x.start&&x.start>=k)?". Earlier months keep it":""),function(){var l=cfg[list];if(l.some(function(y){return y.id===copy.id}))return;
     l.splice(Math.min(ix,l.length),0,copy);unendItem(cfg,list,copy.id);after()},focusSel)}
-/* The line under an item changed or added this pay month: what earlier months keep, and a button to change them too. */
+/* The line under an item changed or added this pay month: what earlier months keep, and a button to change them too.
+   list "people" (2.15): a person whose usual pay changed this pay month (no account, no start). */
 function datedNote(list,x,id,after,focusId){var box=el("div","dated");box.id=id;box.setAttribute("aria-live","polite");box.setAttribute("data-focus",focusId||"");fillDatedNote(box,list,x,after);return box}
-function fillDatedNote(box,list,x,after){clear(box);var k=thisMonth(),last=datedNow(x,k),acc=ITEM_DATED[list][1],t=null,btn=null;box.hidden=true;
+function fillDatedNote(box,list,x,after){clear(box);var k=thisMonth(),last=datedNow(x,k),pay=list==="people",af=pay?"usualPay":"amount",acc=pay?null:ITEM_DATED[list][1],t=null,btn=null;box.hidden=true;
   if(x.start&&x.start===k&&datesEdits()){t="New from "+mLabel(k)+": earlier months don't have it.";btn="Add it to earlier months too"}
-  else if(last){var amt=num(last.amount)!==num(x.amount),parts=[amt?fmt(num(last.amount)):"it"];
-    if(last[acc]!==x[acc])parts.push((list==="income"?"paid into ":"paid from ")+accName(last[acc]));
+  // 2.16: a person on a pattern now or before: "Earlier months keep £1,500.00 each time." (pay each time changed) or, for
+  // a change of pattern, "From February 2027. Earlier months keep monthly pay of £2,300.00." (or "… £420.00 a week.").
+  else if(last&&pay&&(patternOf(last)||patternOf(x))){var lt=patternOf(last),xt=patternOf(x);
+    if(lt&&xt&&lt.every===xt.every){if(Math.abs(lt.each-xt.each)<0.005)return;t="Changed from "+mLabel(k)+". Earlier months keep "+fmt(lt.each)+" each time."}
+    else t="From "+mLabel(k)+". Earlier months keep "+(lt?patternWords(lt):num(last.usualPay)>0?"monthly pay of "+fmt(num(last.usualPay)):"no usual pay")+".";
+    btn="Change earlier months too"}
+  else if(last){var amt=num(last[af])!==num(x[af]),parts=[amt?(pay&&!(num(last[af])>0)?"no usual pay":fmt(num(last[af]))):"it"];
+    if(acc&&last[acc]!==x[acc])parts.push((list==="income"?"paid into ":"paid from ")+accName(last[acc]));
     if(list==="bills"&&JSON.stringify(last.months||[])!==JSON.stringify(x.months||[])){var lm=arr(last.months);parts.push(!lm.length||lm.length>=12?"every month":"in "+listAnd(lm.slice().sort(function(a,b){return a-b}).map(function(m){return MS[m-1]})))}
     if(parts.length<2&&!amt)return;t="Changed from "+mLabel(k)+". Earlier months keep "+(amt?parts.join(", "):parts.join(" "))+".";btn="Change earlier months too"}
   if(!t)return;box.hidden=false;box.appendChild(el("span","small",t));
-  var b=el("button","linkbtn",btn);b.type="button";b.id=box.id+"_all";b.addEventListener("click",function(){if(x.start===k)delete x.start;else undateLast(x);var fid=box.getAttribute("data-focus");cfgNow();if(after)after();
+  var b=el("button","linkbtn",btn);b.type="button";b.id=box.id+"_all";b.addEventListener("click",function(){var cb=pay?clone(cfg):null;if(x.start===k)delete x.start;else undateLast(x);if(cb)refreezeEvery(cb,x.id);var fid=box.getAttribute("data-focus");cfgNow();if(after)after();
     var f=$(box.id);if(f)fillDatedNote(f,list,x,after);var g=fid&&$(fid);if(g)try{g.focus({preventScroll:true})}catch(e){}});box.appendChild(b)}
 function person(id){return cfg?personById(cfg,id):null}
 function accName(id){var a=accById(cfg,id);return a?a.name||"Unnamed account":"Missing account"}
@@ -196,20 +205,31 @@ function accountOptions(c,exclude){return c.accounts.filter(function(a){return !
 var cur=null,saveT=null,openOne=null;
 function fieldVal(id){var i=$(id);if(!i)return null;var r=parseMoney(i.value,false);return r.empty||r.invalid?null:r2(r.value)}
 /* Each person's pay for the month on screen, from the pay boxes. estimated: people whose box is empty (or can't be read),
-   so the estimate is used; filled: people whose box holds the estimate that ticking a transfer filled in (payEstimated). */
+   so the estimate is used; filled: people whose box holds the estimate that ticking a transfer filled in (payEstimated).
+   2.16 (E6): vals is the pay the transfers use, from planPay with the boxes and the month's extra paydays as they are now
+   (live), so an extra payday set aside is left out; plan is planPay's answer; est the estimate ({v, from}) for an empty box.
+   2.17 (13.2, L3): the boxes as they are now go through freezePaydays, as flushMonth's save will, so a count frozen by
+   what's just been typed, the extra payday line it opens and its default following the pay show at once and nothing
+   jumps when the save lands. work: that working copy (its paydays and extra), which the extra payday line is drawn from. */
+var work=null;
 function readPay(){
-  var out={vals:{},estimated:[],invalid:[],est:{},filled:[]},pe=(cur&&cur.payEstimated)||{};
-  cfg.people.forEach(function(p){var e=payEstimate(cfg,months,p.id,monthKey),i=$("pay_"+safeId(p.id)),r=parseMoney(i?i.value:"",false);out.est[p.id]=e;
-    if(r.invalid){out.invalid.push(p.id);out.vals[p.id]=e.v;out.estimated.push(p)}
-    else if(r.empty){out.vals[p.id]=e.v;out.estimated.push(p)}else{out.vals[p.id]=r.value;if(pe[p.id])out.filled.push(p)}});
+  var out={vals:{},estimated:[],invalid:[],est:{},filled:[]},pe=(cur&&cur.payEstimated)||{},live={pay:{},payEstimated:pe},none=payEstimates(),typed={};
+  cfg.people.forEach(function(p){var i=$("pay_"+safeId(p.id)),r=parseMoney(i?i.value:"",false);out.est[p.id]={v:none[p.id].arrived,from:none[p.id].from};
+    if(r.invalid){out.invalid.push(p.id);live.pay[p.id]=null;out.estimated.push(p)}
+    else if(r.empty){live.pay[p.id]=null;out.estimated.push(p)}else{live.pay[p.id]=r.value;typed[p.id]=r.value;if(pe[p.id])out.filled.push(p)}});
+  work=freezePaydays(cfg,months,monthKey,Object.assign({},cur||{},{pay:typed,payEstimated:pe}),months[monthKey]||{});
+  live.extra=isObj(work.extra)?work.extra:{};live.paydays=isObj(work.paydays)?work.paydays:{};
+  out.plan=planPay(cfg,months,monthKey,live);cfg.people.forEach(function(p){out.vals[p.id]=out.plan[p.id].used});
   return out}
+/* 2.16: planPay for the month on screen with every pay box empty: each person's estimate (arrived) and where it's from. */
+function payEstimates(){return planPay(cfg,months,monthKey,{pay:{}})}
 /* Everyone whose pay this month is an estimate, typed box or not. */
 function estimatedPeople(p){return p.estimated.concat(p.filled)}
 function curOneOffs(){return (cur&&Array.isArray(cur.oneOffs))?cur.oneOffs:[]}
 function goMonth(k){
   if(saveT){clearTimeout(saveT);saveT=null;flushMonth()}
   if(tab==="due"&&k!==monthKey)remMonthHint=false; // Reminders' "change month above" hint has done its job
-  monthKey=k;cur=months[k]?clone(months[k]):null;
+  monthKey=k;cur=months[k]?clone(months[k]):null;work=null;xArm=null;xOpened={};xFresh();
   // A one-off being edited belongs to the old month and closes (its changes were saved above); a new one-off that's
   // still being typed stays open, so nothing typed is lost, and is added to the month now on screen.
   openOne=openOne==="new"?"new":null;arm=null;
@@ -221,8 +241,8 @@ function renderPayInputs(){
   if(saveT){clearTimeout(saveT);saveT=null;flushMonth()}
   var g=clear($("payGrid"));
   if(!cfg.people.length){var b=el("button","linkbtn","Add the people who get paid in Settings › People");b.addEventListener("click",function(){openSettings("sPeople")});g.appendChild(b);return}
-  var mc=monthCfg();
-  cfg.people.forEach(function(p,ix){var id=safeId(p.id),e=payEstimate(cfg,months,p.id,monthKey),pa=(personById(mc,p.id)||p).payAccount;
+  var mc=monthCfg(),none=payEstimates();
+  cfg.people.forEach(function(p,ix){var id=safeId(p.id),e={v:none[p.id].arrived},pa=(personById(mc,p.id)||p).payAccount;
     var f=el("div","field payrow");f.appendChild(avatar(pa,true,(p.name||"?").trim().charAt(0).toUpperCase()||"?"));
     var l=el("label");l.htmlFor="pay_"+id;l.appendChild(el("b",null,p.name||"Person "+(ix+1)));l.appendChild(el("span",null,"Into "+accName(pa)));f.appendChild(l);
     var mb=el("div","money");mb.id="payBox_"+id;mb.appendChild(el("span",null,"£"));
@@ -233,29 +253,44 @@ function renderPayInputs(){
     inp.addEventListener("input",function(){var rv=parseMoney(inp.value,false);if(!rv.invalid&&!rv.empty&&cur&&cur.payEstimated&&cur.payEstimated[p.id]){delete cur.payEstimated[p.id];if(!Object.keys(cur.payEstimated).length)delete cur.payEstimated}renderResults();queueMonthSave()});
     inp.addEventListener("blur",function(){var r=parseMoney(inp.value,false);if(!r.empty&&!r.invalid)inp.value=r.value.toFixed(2)});
     inp.addEventListener("keydown",function(ev){if(ev.key==="Enter"){ev.preventDefault();var nx=cfg.people[ix+1];if(nx&&$("pay_"+safeId(nx.id)))$("pay_"+safeId(nx.id)).focus();else inp.blur()}});
-    mb.appendChild(inp);f.appendChild(mb);var h=el("div","hint");h.id="payHint_"+id;f.appendChild(h);g.appendChild(f)});
+    mb.appendChild(inp);f.appendChild(mb);var h=el("div","hint");h.id="payHint_"+id;f.appendChild(h);
+    // 2.16: under the pay of someone paid weekly, every two or four weeks: the extra payday, and the standing-order notice.
+    var x=el("div","payx");x.id="payX_"+id;f.appendChild(x);g.appendChild(f)});
 }
 function renderPay(){if(!cfg.setupDone)return;renderOneOffs();renderResults()}
 function renderResults(){
   if(!cfg.setupDone)return;
   var m=mNum(monthKey),p=readPay(),mc=monthCfg(),r=calc(mc,m,p.vals,curOneOffs()),done=(cur&&cur.done)||{};
+  var ticked=anyTicked();
   cfg.people.forEach(function(pp){var id=safeId(pp.id),inp=$("pay_"+id);if(!inp)return;var bad=p.invalid.indexOf(pp.id)>=0;$("payBox_"+id).classList.toggle("err",bad);
-    var h=$("payHint_"+id);h.className="hint"+(bad?" err":"");var e=p.est[pp.id];
+    var h=$("payHint_"+id);h.className="hint"+(bad?" err":"");var e=p.est[pp.id],pl=p.plan[pp.id],pat=pl.kind==="pattern";
     if(bad)h.textContent="Enter an amount like 1850.00";
-    else if(inp.value.trim()==="")h.textContent=e.from?"Using "+mShort(e.from)+": "+fmt(e.v):e.v?"Using usual pay: "+fmt(e.v):"Not typed in yet";
+    // 2.17: with a recent payday, the hint counts the paydays and lists them (payHint), unless a tick filled the box.
+    else if(pat&&pl.layer===2&&p.filled.indexOf(pp)<0)payHint(h,pp,pl,inp.value.trim()!=="");
+    // 2.16: someone paid weekly, every two or four weeks types everything that's arrived since the last transfer day.
+    else if(inp.value.trim()==="")h.textContent=pat?"Type everything that's arrived since your last transfer day (usually "+plural(pl.n,"payday")+"). Until then: "+eachTimes(pl)+".":e.from?"Using "+mShort(e.from)+": "+fmt(e.v):e.v?"Using usual pay: "+fmt(e.v):"Not typed in yet";
     // Filled in with the estimate when a transfer was ticked: say so until the real figure is typed.
-    else if(p.filled.indexOf(pp)>=0){var v=p.vals[pp.id];h.textContent=(Math.abs(v-e.v)<0.005?"Using "+(e.from?mShort(e.from):"usual pay")+": "+fmt(v):fmt(v))+" (estimated \u2014 tap to type what arrived)"}
-    else h.textContent=""});
+    else if(p.filled.indexOf(pp)>=0){var v=p.vals[pp.id],same=Math.abs(v-e.v)<0.005;h.textContent=(same&&pat?eachTimes(pl):same?"Using "+(e.from?mShort(e.from):"usual pay")+": "+fmt(v):fmt(v))+" (estimated \u2014 tap to type what arrived)"}
+    else h.textContent="";
+    renderPayX(pp,pl,ticked)});
   renderNotice();renderActionBanner();renderPayLine();
   var pb=clear($("payBanner")),ep=estimatedPeople(p);
-  if(ep.length&&cfg.people.length){var fromLast=ep.some(function(x){return p.est[x.id].from}),src=fromLast?"last month's pay":"usual pay";
-    var all=ep.length===cfg.people.length;
-    pb.appendChild(el("div","banner",(all?"These transfers use "+src+".":"These transfers use "+src+" for "+listAnd(ep.map(function(x){return x.name}))+".")+" When pay arrives, type what reached your bank to make them exact."))}
+  // 2.16: someone on a pattern has their own sentence: "These transfers use Jordan's usual pay for 4 paydays."
+  var epPat=ep.filter(function(x){return p.plan[x.id].kind==="pattern"}),epMon=ep.filter(function(x){return p.plan[x.id].kind!=="pattern"});
+  // 2.17: with the paydays counted, the paydays these transfers use: min(M, N), never more than usual.
+  if(ep.length&&cfg.people.length){var bt=epPat.map(function(x){var n=paydaysUsed(p.plan[x.id]),nm=x.name||"Someone";
+      return n?"These transfers use "+possessive(nm)+" usual pay for "+plural(n,"payday")+".":nm+" has no paydays this month, so these transfers use none of "+possessive(nm)+" pay."}).join(" ");
+    if(epMon.length){var fromLast=epMon.some(function(x){return p.est[x.id].from}),src=fromLast?"last month's pay":"usual pay";
+      var all=epMon.length===cfg.people.length;
+      bt=(all?"These transfers use "+src+".":"These transfers use "+src+" for "+listAnd(epMon.map(function(x){return x.name}))+".")+(bt?" "+bt:"")+" When pay arrives, type what reached your bank to make them exact."}
+    pb.appendChild(el("div","banner",bt))}
   // steps
   // 2.13: a tick at an amount that has changed since isn't settled (nDone counts the settled ones, nTicked every tick):
   // "All transfers done", the ring's "done" and the phone's "done" tap wait for it. toSend is what's left to send (an
   // amount that went down has nothing to send, but still isn't settled). "N of M done" still counts ticks, as before.
   var ol=clear($("steps")),w=clear($("warnings")),nDone=0,nTicked=0,toSend=0;
+  // 2.14: the first transfer into an account with a rough figure says what's in it that isn't listed yet (5.6).
+  var unl={},figSaid={};mc.accounts.forEach(function(a){var x=r.A[a.id];if(x&&x.unlisted>0.004)unl[a.id]=x.unlisted});
   r.steps.forEach(function(s){
     var d=done[s.id],isDone=d!=null&&d!==false;if(isDone){nTicked++;if(typeof d==="number"&&Math.abs(d-r2(s.amt))>0.004)toSend+=Math.max(0,r2(s.amt)-d);else nDone++}
     var li=el("li","step"+(isDone?" done":""));li.setAttribute("data-id",s.id);
@@ -271,13 +306,19 @@ function renderResults(){
     li.appendChild(t);li.appendChild(mid);li.appendChild(cp);
     if(s.kind==="topup")li.appendChild(el("div","note","Top-up: "+accName(s.to)+" doesn't have enough for its own bills this month, so money goes back to it."+(s.short?" That's all "+accName(s.from)+" has: "+accName(s.to)+" is still "+fmt(s.short)+" short.":"")));
     if(s.kind==="contribute")li.appendChild(el("div","note",contribText(s,r,mc)));
-    if(isDone&&typeof d==="number"&&Math.abs(d-r2(s.amt))>0.004)li.appendChild(el("div","changed","You ticked this at "+fmt(Math.abs(d))+" but it's now "+fmt(Math.abs(s.amt))+" ("+fmtS(r2(s.amt)-d)+"). Send the difference, or untick and tick again once it's right."));
+    if(s.to&&unl[s.to]&&!figSaid[s.to]){figSaid[s.to]=1;var fn=el("div","note","Includes "+fmt(unl[s.to])+" of bills not listed yet.");fn.id="figNote_"+safeId(s.to);li.appendChild(fn)}
+    // 2.16: a ticked step that went down says what to move back (every household); one that went up, what's still to send.
+    if(isDone&&typeof d==="number"&&Math.abs(d-r2(s.amt))>0.004){var less=r2(d-r2(s.amt));
+      li.appendChild(el("div","changed",less>0?"You ticked this at "+fmt(Math.abs(d))+" but it's now "+fmt(Math.abs(s.amt))+", "+fmt(less)+" less. Move "+fmt(less)+" back to "+accName(s.from)+", or untick and tick again once it's right."
+        :"You ticked this at "+fmt(Math.abs(d))+" but it's now "+fmt(Math.abs(s.amt))+" ("+fmtS(r2(s.amt)-d)+"). Send the difference, or untick and tick again once it's right."))}
     ol.appendChild(li);
     if(s.kind==="topup")w.appendChild(el("div","banner",accName(s.to)+" doesn't have enough for its bills this month, so "+accName(s.from)+" tops it up with "+fmt(s.amt)+"."));
   });
   // 2.12.1: a top-up from an account with nothing to send isn't a transfer to make: say what's short instead.
   arr(r.cant).forEach(function(s){var b=el("div","banner bad",accName(s.to)+" is "+fmt(s.short)+" short, and "+accName(s.from)+" has nothing to top it up with."+(sharesSet(s.to)?" Raise the set amounts paid into it, or move money into it.":" Move money into it, or trim a bill."));b.id="cant_"+safeId(s.to);w.appendChild(b)});
   if(!r.steps.length)ol.appendChild(el("li","empty small muted","No transfers needed this month."));
+  // An account with a figure that no transfer goes into (the pay goes straight there): said under the transfers.
+  var fnl=$("figNote"),fr=Object.keys(unl).filter(function(id){return !figSaid[id]});fnl.hidden=!fr.length;fnl.textContent=fr.map(function(id){return possessive(accName(id))+" bills include "+fmt(unl[id])+" not listed yet."}).join(" ");
   $("progressText").textContent=r.steps.length?nTicked+" of "+r.steps.length+" done":"";$("shareTransfers").hidden=!r.steps.length;
   $("shareTransfers").setAttribute("aria-label",sendsUpdate()?"Share this month's transfers or an update file":"Share this month's transfers");
   if(sendsUpdate())$("shareTransfers").setAttribute("aria-haspopup","dialog");else $("shareTransfers").removeAttribute("aria-haspopup");
@@ -296,10 +337,12 @@ function renderResults(){
   [["Income",r.totalIn],["Bills",r.billsExSav],["Saving",r.totalSaving],["Budgets & one-offs",r.spend+r.oneOut]].forEach(function(x){var d=el("div","stat");d.appendChild(el("div","k",x[0]));d.appendChild(el("div","v",fmt(x[1])));st.appendChild(d)});
   var al=clear($("acctList"));
   mc.accounts.forEach(function(a){var box=el("div");var h=el("div","accthead");h.appendChild(acctTag(a.id));
-    var tot=r.A[a.id].bills.reduce(function(s,b){return s+num(b.amount)},0);h.appendChild(el("span","num",fmt(tot)));box.appendChild(h);
+    var tot=r.A[a.id].bills.reduce(function(s,b){return s+num(b.amount)},0)+(r.A[a.id].unlisted||0),ep=estimateParts(mc,a.id);h.appendChild(el("span","num",fmt(tot)));box.appendChild(h);
+    // 2.14: "Joint: £1,120.00 listed · £380.00 not listed yet (your figure £1,500.00)", with a thin bar.
+    if(ep.has)box.appendChild(figLine(a.id,ep,"bba_"+safeId(a.id)));
     var rr=el("div","rows");mc.bills.filter(function(b){return b.account===a.id}).forEach(function(b){var on=applies(b,m);var d=el("div","row sub");
       d.appendChild(el("span","k",b.name+(on?"":" (not this month)")+(b.savings?" · savings":"")));d.appendChild(el("span","v",on?fmt(num(b.amount)):"–"));rr.appendChild(d)});
-    if(!rr.firstChild)rr.appendChild(el("div","small muted","No bills from this account."));
+    if(!rr.firstChild&&!ep.has)rr.appendChild(el("div","small muted","No bills from this account."));
     box.appendChild(rr);al.appendChild(box)});
 }
 /* The first thing on the Pay tab: what's left this month (all floats together), progress through the transfers, and
@@ -311,6 +354,142 @@ function contribText(s,r,mc){return contribWords(mc,r,s)}
 function sharesSet(id){var a=accById(monthCfg(),id),f=a&&a.funding;return isObj(f)&&(f.rule==="set"||isObj(f.set))}
 /* The settings for the month on screen: the way the household manages its money then (cfgFor, 2.12). */
 function monthCfg(){return cfgFor(cfg,monthKey,curOneOffs())}
+/* ---------- the extra payday and standing orders on the Pay tab (2.16, docs/payperiods.md 5.3.4, 5.3.6, E7, E10, E11) ----------
+   Under the pay of someone paid weekly, every two or four weeks, once their pay is typed (E7): "Had an extra payday?",
+   which opens a line (cur.extra[personId] = {amount, counted?}) pre-filled with pay each time. Set aside (the default)
+   leaves it out of the transfers; "Count it this month" puts it back in. Ticks come first: with any transfer ticked the
+   line opens counted, and "Set it aside" takes a second tap ("Set it aside anyway") after a warning, since it lowers
+   ticked transfers (each then says what to move back). xArm: the person whose "Set it aside" is waiting for that second
+   tap; xOpened: people whose line just opened counted because of ticks (it says why until the next change). */
+/* 2.17: xHad, people whose extra payday line was already there when the month was opened; xHeard, people whose line's
+   head has been read out since. */
+var xHad={},xHeard={},xBlurT=null;
+/* The month on screen replaced (a change of interval, a change of style or its undo): its lines are as they were saved. */
+function xFresh(){xHeard={};xHad={};if(cur&&isObj(cur.extra))Object.keys(cur.extra).forEach(function(pid){xHad[pid]=true})}
+var xArm=null,xOpened={},X_RULES={afterOwn:"Counting it changes the shares, because you share what's left after your own bills.",sameLeft:"Counting it changes the shares, because you share so you each keep the same."};
+/* Whether any transfer in the month on screen is ticked. */
+function anyTicked(){var d=(cur&&cur.done)||{};return Object.keys(d).some(function(k){return d[k]!=null&&d[k]!==false})}
+/* "4 × £420.00" (one payday: "£1,560.00"): an estimate from pay each time. 2.17: for that many paydays (paydaysUsed). */
+function eachTimes(pl){var k=paydaysUsed(pl);return k>1?k+" × "+fmt(pl.each):fmt(k?pl.each:0)}
+/* The paydays an estimate is for: the usual number, or (2.17, counted) min(M, N). */
+function paydaysUsed(pl){return pl.layer===2?Math.min(pl.m,pl.n):pl.n}
+/* "£171.50 a week to Bills account": one standing order. */
+function orderWords(o){return fmt(o.amount)+" "+(o.word==="week"?"a week":"every "+o.word)+" to "+o.name}
+/* The extra payday of person pid in the month on screen (2.17: in the working copy, so a line the count has just opened
+   is there before it's saved), or null. */
+function extraOf(pid){var d=work||cur,x=d&&isObj(d.extra)?d.extra[pid]:null;return isObj(x)?x:null}
+/* Change (or with fn null, remove) person pid's extra payday, then redraw and save. 2.17: from the working copy, whose
+   count and extra payday lines (frozen by what's typed) the month then keeps. */
+function setExtra(pid,fn,later){clearTimeout(xBlurT);xBlurT=null;cur=cur||{};if(work){if(isObj(work.paydays))cur.paydays=clone(work.paydays);if(isObj(work.extra))cur.extra=clone(work.extra)}
+  var ex=Object.assign({},isObj(cur.extra)?cur.extra:{});
+  if(fn)ex[pid]=fn(Object.assign({},ex[pid]||{}));else delete ex[pid];if(Object.keys(ex).length)cur.extra=ex;else delete cur.extra;
+  renderResults();if(later)queueMonthSave();else{if(saveT){clearTimeout(saveT);saveT=null}flushMonth()}}
+/* Text for a live region, set 0.7 s after the last change (so it's read out once typing stops), or straight away. */
+function sayLater(n,t,now){clearTimeout(n._sayT);if(now||n.textContent===t){n.textContent=t;return}n._sayT=setTimeout(function(){n.textContent=t},700)}
+/* The share rule under which counting someone's extra payday changes the shares (5.3.4), or null. */
+function xRule(pid){var r=null;monthCfg().accounts.forEach(function(a){var f=a.funding;if(!r&&isObj(f)&&arr(f.people).indexOf(pid)>=0&&X_RULES[f.rule])r=f.rule});return r}
+/* Person pp's part under their pay box: drawn again only when what it shows changes, so typing keeps its place.
+   2.17 (docs/payperiods.md 13.2, L3, L6, L15): for someone with a recent payday, the extra payday line can open by itself
+   (the count found more paydays than usual: "Jordan has 5 paydays since …, one more than usual: …", with "Not an extra
+   payday" in place of Remove), read "All 5 of Jordan's paydays are in these transfers." with "It was an extra payday", or
+   be locked ("Used in May 2027.") while a later month's one-off uses it; and a month with fewer paydays than usual has the
+   gap line, with "Use it this month" when last month's extra payday was set aside. */
+function renderPayX(pp,pl,ticked){var id=safeId(pp.id),box=$("payX_"+id);if(!box)return;
+  var pat=pl.kind==="pattern",x=pat&&pl.typed?extraOf(pp.id):null,name=pp.name||"Someone",inp=$("pay_"+id);
+  var first=pat&&!cfg.example&&!firstMonthDone(months,monthKey),note=pat?standingOrdersNotice(cfg,months,monthKey,pp.id):null,nt="";
+  if(note&&note.kind==="first")nt="From your next pay, standing orders of "+listAnd(note.orders.map(orderWords))+" cover these transfers every month. This month, make them as usual.";
+  else if(note)nt=possessive(name)+" standing order to "+note.name+" needs to be "+fmt(note.amount)+" "+(note.word==="week"?"a week":"every "+note.word)+" from your next pay (it was "+fmt(note.was)+"). This month, make the transfer as usual.";
+  var st=x?extraState(cfg,months,monthKey,pp.id,work||cur||{}):null,fr=!!st&&st.opened==="freeze",lock=!!st&&!!st.lockedIn,not=!!st&&st.not;
+  // While the amount is being typed in, the line stays as it is: clearing it or typing 0 on the way to another figure
+  // isn't "Not an extra payday" (that's its button, or leaving the field at £0).
+  if(not&&document.activeElement&&document.activeElement.id==="extraAmt_"+id){not=false;st=Object.assign({},st,{not:false})}
+  var counted=!!(x&&x.counted===true),armed=!!x&&!lock&&xArm===pp.id,warn=!!x&&!lock&&ticked&&(armed||!counted),rule=x&&!counted&&!not&&!lock?xRule(pp.id):null;
+  // The gap line: fewer paydays than usual (L15), and what last month's extra payday can do about it (L6).
+  var gap=pat&&pl.layer===2&&pl.m<pl.n,used=gap?extraUsedIn(months,monthKey,pp.id):null,offer=gap&&!used?useExtraOffer(cfg,months,monthKey,pp.id):null;
+  var gapOn=gap&&(pl.m>0||!!used||!!offer),dd=pat&&pl.layer===2?paydaysShown(pl):null;
+  var sig=JSON.stringify([pat,pat&&pl.typed,!!x,counted,armed,!!xOpened[pp.id],warn,rule,first,nt,name,st,fr&&!not?[pl.m,dd]:null,gapOn?[pl.m,pl.n,dd,used&&[used.id,used.amount],offer&&offer.amount]:null]);
+  if(inp){if(nt)inp.setAttribute("aria-describedby","soNote_"+id);else inp.removeAttribute("aria-describedby")}
+  var sayText=!x?"":lock?usedInWords(st.lockedIn):not?notExtraWords(name,st.m):xOpened[pp.id]&&counted?"Some of these transfers are ticked already, so this extra payday is counted. Set it aside and the ticked ones will show what to move back."
+    :counted?possessive(name)+" extra payday ("+fmt(num(x.amount))+") is counted in these transfers.":"Set aside: it stays in "+possessive(name)+" account and isn't in these transfers.";
+  if(box.getAttribute("data-sig")===sig){var sy=$("extraSay_"+id);if(sy)sayLater(sy,sayText);if(lock||fr){var ai0=$("extraAmt_"+id);if(ai0&&document.activeElement!==ai0)ai0.value=money2(x.amount)}return}
+  var a=document.activeElement,fid=a&&box.contains(a)?a.id:null;box.setAttribute("data-sig",sig);clear(box);
+  if(first)box.appendChild(el("div","small muted","This is your first transfer day: if some of that pay is already spent, type what's left of it."));
+  if(pat&&pl.typed&&!x){var lk=el("button","linkbtn","Had an extra payday?");lk.type="button";lk.id="extraAdd_"+id;lk.setAttribute("aria-label","Had an extra payday, "+name+"?");
+    lk.addEventListener("click",function(){var t=anyTicked();xArm=null;xOpened={};if(t)xOpened[pp.id]=true;setExtra(pp.id,function(){var o={amount:r2(pl.each)};if(t)o.counted=true;return o});focusOn("#extraAmt_"+id)});box.appendChild(lk)}
+  if(x){var xb=el("div","box");xb.id="extra_"+id;xb.setAttribute("role","group");xb.setAttribute("aria-label",possessive(name)+" extra payday");
+    // 2.17: a line the count opened starts with why (read out when it opens by itself).
+    if(fr&&!not){var hd=el("div","small"),fill=function(){clear(hd);var w=paydayLine(name+" has ",pl,", "+moreWords(pl.m-pl.n)+" than usual");while(w.firstChild)hd.appendChild(w.firstChild)};hd.id="extraHead_"+id;xb.appendChild(hd);
+      // Read out once, when the count opens the line (not when a month that already had it is opened, nor on each redraw).
+      if(!xHad[pp.id]&&!xHeard[pp.id]){xHeard[pp.id]=true;hd.setAttribute("aria-live","polite");setTimeout(function(){if(hd.isConnected)fill()},30)}else fill()}
+    if(!not){var ai=textIn(money2(x.amount),function(v){var r=parseMoney(v,false),bad=r.invalid||(!r.empty&&r.value<0);ai.classList.toggle("bad",bad);if(bad){ai.setAttribute("aria-invalid","true");return}ai.removeAttribute("aria-invalid");
+        // 2.17 (L3): an amount typed on a line the count opened is the household's own, and no longer follows the pay.
+        setExtra(pp.id,function(o){o.amount=r.empty?0:r2(r.value);if(fr)o.edited=true;return o},true)},"extraAmt_"+id,true);
+      if(lock){ai.readOnly=true;ai.setAttribute("aria-describedby","extraSay_"+id)}
+      // Left at £0, a line the count opened becomes "Not an extra payday" (drawn again once focus has moved on).
+      // A press on one of the line's buttons goes ahead (its own change draws the line again); otherwise focus moves to "It
+      // was an extra payday" when the line becomes that.
+      if(fr)ai.addEventListener("blur",function(e){var rt=e.relatedTarget,mine=!!(rt&&rt.tagName==="BUTTON"&&xb.contains(rt));clearTimeout(xBlurT);
+        xBlurT=setTimeout(function(){xBlurT=null;if(document.activeElement===ai)return;renderResults();var f=document.activeElement;if((!f||f===document.body)&&$("extraWas_"+id))focusOn("#extraWas_"+id)},mine?300:0)});
+      xb.appendChild(labeled("Extra payday (£)",ai))}
+    // A live region drawn empty, then filled, so the new state is read out after a redraw.
+    var say=el("div","small");say.id="extraSay_"+id;say.setAttribute("aria-live","polite");xb.appendChild(say);setTimeout(function(){if(say.isConnected)say.textContent=sayText},30);
+    if(warn){var w=el("div","banner","Some transfers are ticked already. Setting this aside lowers them, and Dovetail will show what to move back.");w.id="extraWarn_"+id;xb.appendChild(w)}
+    if(rule){var rn=el("div","small muted",X_RULES[rule]);rn.id="extraRule_"+id;xb.appendChild(rn)}
+    var br=el("div","btnrow"),b1;
+    if(lock)b1=null;
+    else if(not){b1=el("button","btn ghost",armed?"Set it aside anyway":"It was an extra payday");b1.id="extraWas_"+id;b1.setAttribute("aria-label",armed?"Set "+possessive(name)+" extra payday aside anyway":"It was an extra payday, "+name);if(warn)b1.setAttribute("aria-describedby","extraWarn_"+id);
+      b1.addEventListener("click",function(){
+        // E10: it lowers the pay used, so with anything ticked the first tap warns.
+        if(anyTicked()&&xArm!==pp.id){xArm=pp.id;renderResults();focusOn("#extraWas_"+id);return}
+        xArm=null;setExtra(pp.id,function(o){delete o.edited;delete o.counted;var d=extraDefaultFor(cfg,months,monthKey,pp.id,work||cur||{});o.amount=d!=null?d:r2(pl.each);return o});focusOn("#extraCount_"+id)})}
+    else if(!counted){b1=el("button","btn ghost","Count it this month");b1.id="extraCount_"+id;b1.setAttribute("aria-label","Count "+possessive(name)+" extra payday this month");
+      b1.addEventListener("click",function(){xArm=null;delete xOpened[pp.id];setExtra(pp.id,function(o){o.counted=true;return o});focusOn("#extraAside_"+id)})}
+    else{b1=el("button","btn ghost",armed?"Set it aside anyway":"Set it aside");b1.id="extraAside_"+id;if(warn)b1.setAttribute("aria-describedby","extraWarn_"+id);
+
+      b1.addEventListener("click",function(){delete xOpened[pp.id];
+        // E10: with anything ticked, the first tap warns; the second sets it aside.
+        if(anyTicked()&&xArm!==pp.id){xArm=pp.id;renderResults();focusOn("#extraAside_"+id);return}
+        xArm=null;setExtra(pp.id,function(o){delete o.counted;return o});focusOn("#extraCount_"+id)})}
+    if(b1){b1.type="button";br.appendChild(b1)}
+    if(fr&&!not&&!lock){var nb=el("button","btn ghost","Not an extra payday");nb.type="button";nb.id="extraNot_"+id;nb.setAttribute("aria-label","Not an extra payday, "+name);
+      nb.addEventListener("click",function(){xArm=null;delete xOpened[pp.id];setExtra(pp.id,function(){return {amount:0,edited:true}});focusOn("#extraWas_"+id)});br.appendChild(nb)}
+    else if(!fr&&!lock){var rm=el("button","btn ghost","Remove");rm.type="button";rm.id="extraRemove_"+id;rm.setAttribute("aria-label","Remove "+possessive(name)+" extra payday");
+      rm.addEventListener("click",function(){xArm=null;delete xOpened[pp.id];setExtra(pp.id,null);focusOn("#extraAdd_"+id)});br.appendChild(rm)}
+    if(br.firstChild)xb.appendChild(br);box.appendChild(xb)}
+  if(gapOn){var gb=el("div","banner col");gb.id="gap_"+id;gb.tabIndex=-1;var gt=el("div");
+    if(pl.m>0){var gw=paydayLine(name+" has ",pl,", not the usual "+pl.n);while(gw.firstChild)gt.appendChild(gw.firstChild);gt.appendChild(document.createTextNode(" These transfers use "+(pl.m===1?"that one.":"the "+pl.m+".")))}
+    if(used||offer)gt.appendChild(document.createTextNode((pl.m>0?" ":"")+(used?usedExtraWords(cfg,pp.id,used):useExtraWords(cfg,pp.id,offer))));gb.appendChild(gt);
+    if(offer){var ub=el("button","btn ghost","Use it this month");ub.type="button";ub.id="useExtra_"+id;ub.setAttribute("aria-label","Use "+possessive(name)+" extra payday from "+MN[mNum(offer.extraFrom)-1]+" this month");
+      ub.addEventListener("click",function(){var o=useExtraOffer(cfg,months,monthKey,pp.id);if(!o)return;o.id=uid("o");cur=cur||{};cur.oneOffs=curOneOffs().concat([o]);
+        if(saveT){clearTimeout(saveT);saveT=null}flushMonth();keepScroll(renderPay);updateBadge();focusOn("#gap_"+id)});
+      var ur=el("div","btnrow");ur.appendChild(ub);gb.appendChild(ur)}
+    box.appendChild(gb)}
+  if(nt){var so=el("div","banner good",nt);so.id="soNote_"+id;box.appendChild(so)}
+  if(fid)focusOn("#"+fid)}
+/* 2.17: the dates a layer-2 entry shows: today's counted dates while they match the count, and only with a transfer day
+   set (L8: with none, the 25th is used for counting, and no dates are shown). null otherwise. */
+function paydaysShown(pl){return payCfg().day&&pl.dates?pl.dates:null}
+/* "one more", "2 more" (than usual). */
+function moreWords(k){return (k===1?"one":String(k))+" more"}
+/* 2.17 (L15): "{start}5 paydays since Fri 30 Oct{mid}: 2, 9, 16, 23 and 30 Oct." with short dates hidden from screen
+   readers and full ones beside them; with no dates to show, "…5 paydays since your last transfer day{mid}." or, when
+   today's count no longer matches the one frozen, "…5 paydays (counted when this month was first saved){mid}.". */
+function paydayLine(start,pl,mid){var f=document.createDocumentFragment(),dd=paydaysShown(pl),t=function(s){f.appendChild(document.createTextNode(s))};
+  if(dd){t(start+paydaysN(pl.m)+" since ");f.appendChild(shortDates(transferWindow(cfg,monthKey).after));t(mid+": ");f.appendChild(shortDates(dd));var later=stillToCome(dd);t((later?" ("+later+" still to come)":"")+".")}
+  else t(start+(payCfg().day?frozenWords(pl.m):paydaysN(pl.m)+" since your last transfer day")+mid+".");
+  return f}
+function stillToCome(dd){var t=todayStr();return dd.filter(function(d){return d>t}).length}
+/* 2.17 (L15): the hint under the pay box of someone whose paydays are counted (planPay's layer 2). Not typed: the paydays
+   since the last transfer day and the estimate ("4 paydays since Fri 30 Oct: 6, 13, 20 and 27 Nov (2 still to come).
+   Until then: 4 × £420.00."); typed: the paydays, unless the extra payday line or the gap line already says them. */
+function payHint(h,pp,pl,typed){clear(h);var name=pp.name||"Someone",more=pl.m>pl.n?", "+moreWords(pl.m-pl.n)+" than usual":"",t=function(s){h.appendChild(document.createTextNode(s))};
+  if(typed&&pl.m>0){if(pl.m<pl.n||extraOf(pp.id))return;var w=paydayLine("",pl,"");while(w.firstChild)h.appendChild(w.firstChild);return}
+  if(pl.m===0){if(paydaysShown(pl)){t("No paydays for "+name+" since ");h.appendChild(shortDates(transferWindow(cfg,monthKey).after));t(", not the usual "+pl.n+".")}
+    else t("No paydays for "+name+" since your last transfer day, not the usual "+pl.n+".");return}
+  if(pl.m<pl.n){t("Until then: "+eachTimes(pl)+".");return}
+  var l=paydayLine("",pl,more);while(l.firstChild)h.appendChild(l.firstChild);
+  t(" Until then: "+eachTimes(pl)+(more?"; the extra one is set aside once you type what arrived":"")+".")}
+
 function renderHero(r,nDone,nChanged){
   var box=clear($("hero")),n=r.steps.length,neg=r2(r.flt)<0;box.classList.toggle("neg",neg);
   box.hidden=!cfg.people.length||!cfg.accounts.length;if(box.hidden){heroShown=null;return}
@@ -350,6 +529,7 @@ function renderFloats(r,w){
     s.income.forEach(function(i){rin(i.name||"Income",num(i.amount))});
     s.oneIn.forEach(function(o){rin((o.name||"One-off")+" (one-off)",num(o.amount))});
     s.bills.forEach(function(b){row(b.name,"− "+fmt(num(b.amount)),true)});
+    if(s.unlisted>0.004)row("Bills not listed yet","− "+fmt(s.unlisted),true);
     s.savings.forEach(function(x){row("To "+(x.name||"savings"),"− "+fmt(num(x.amount)),true)});
     s.budgets.forEach(function(b){row(b.name||"Budget","− "+fmt(num(b.amount)),true)});
     s.oneOut.forEach(function(o){row((o.name||"One-off")+" (one-off)","− "+fmt(num(o.amount)),true)});
@@ -479,6 +659,7 @@ function flushMonth(){
   var typed=cfg.people.some(function(pp){var i=$("pay_"+safeId(pp.id));return i&&i.value.trim()!==""});
   var hasInput=typed||(cur&&cur.done&&Object.keys(cur.done).length)||curOneOffs().length;
   if(!hasInput&&!months[k])return;
+  // 2.16 (E6): p.vals is the pay used (planPay), so the saved results leave out an extra payday set aside.
   var r=calc(cfgFor(cfg,k,curOneOffs()),mNum(k),p.vals,curOneOffs()),old=months[k]||{},pay=Object.assign({},old.pay||{}),st={};
   // A pay box that can't be read keeps the figure last saved; ticks and one-offs are still saved.
   cfg.people.forEach(function(pp){if(p.invalid.indexOf(pp.id)<0)pay[pp.id]=fieldVal("pay_"+safeId(pp.id));else if(!(pp.id in pay))pay[pp.id]=null});
@@ -487,6 +668,13 @@ function flushMonth(){
   // payEstimated: the people whose saved pay is the estimate filled in by a tick; only while there's a figure to mark.
   var pe={};Object.keys((cur&&cur.payEstimated)||{}).forEach(function(id){if(cur.payEstimated[id]&&pay[id]!=null)pe[id]=true});
   if(Object.keys(pe).length)body.payEstimated=pe;else delete body.payEstimated;
+  // 2.16: extra paydays ({personId: {amount, counted?}}), only while there's one.
+  var ex=cur&&isObj(cur.extra)?cur.extra:null;if(ex&&Object.keys(ex).length)body.extra=clone(ex);else delete body.extra;
+  // 2.17 (13.2, L3): the paydays counted for each person ({personId: 0 to 6}), only while there's one; then the freeze: a
+  // box that's just been filled while its person has a recent payday stores the count (and with one more payday than
+  // usual opens the extra payday line), and a default set aside follows the pay in the box.
+  var pdc=cur&&isObj(cur.paydays)?cur.paydays:null;if(pdc&&Object.keys(pdc).length)body.paydays=clone(pdc);else delete body.paydays;
+  body=freezePaydays(cfg,months,k,body,old);
   // cur stays the working copy (an open one-off editor holds its objects); the saved month is an independent copy.
   months[k]=clone(body);cur=body;saveMonths();
 }
@@ -520,6 +708,8 @@ function fallbackCopy(t){var i=document.createElement("textarea");i.value=t;i.se
 var whatsNew=false,whatsNewFrom=null;
 /* What's new, by version (2.13): each release adds its lines here, naming any change to an existing household's figures.
    Kept for every version from 2.12, so someone who skipped a release still sees its lines. */
+/* What board is, where it first appears (setup and Settings › People; the owner, 22 October 2026). */
+var BOARD_IS="Board is a set amount each month towards the household, as a grown-up child living at home might pay.";
 var WHATS_NEW={
   "2.12":["An account can be paid for by more than one of you: half each, in proportion to pay, so you each keep the same, or set amounts.",
   "Each share is its own transfer, first in the list, and the top card shows what each of you keeps.",
@@ -529,7 +719,21 @@ var WHATS_NEW={
   "A joint account that's short is named at the top, with what to do, rather than a top-up from an account with nothing in it."],
   "2.13":["Analysis, setup's last step and the exports now name an account that's short, even when the total left over looks fine, and a top-up never sends more than its account has.",
   "Changing how you manage your money keeps your own accounts, and setup asks only what makes a difference.",
-  "Safer backups: one a month is kept for a year, and files using shares, board or a change from a month need 2.13 on the other phone too."]};
+  "Safer backups: one a month is kept for a year, and files using shares, board or a change from a month need 2.13 on the other phone too."],
+  "2.14":["Not sure of every bill? Give an account a rough figure for its bills and list them over time: Dovetail shows what's not listed yet. Or paste a list from a spreadsheet or a note, in setup or Settings \u203a Bills.",
+  "Setup asks about bills that don't come every month, puts your own accounts' bills a tap away, and takes budgets and savings in the account they're kept in.",
+  "Nothing changes in your figures unless you add a rough figure. If you use one, update both phones before sending an update file: the file needs 2.14."],
+  "2.14.1":["Board is explained where you first meet it, in setup and Settings \u203a People: a set amount each month towards the household, as a grown-up child living at home might pay. It's also called keep. Nothing changes in your figures."],
+  "2.15":["Changing someone's usual pay now applies from this pay month, like a bill, so earlier months keep their shares. Nothing else changes in your figures."],
+  "2.16":["Paid weekly, every two weeks or every four weeks? Choose it in Settings \u203a People. Type everything that's arrived since your last transfer day; an extra payday is set aside unless you count it.",
+  "Settings \u203a People shows standing orders from each pay that cover every month.",
+  "Nothing changes in your figures unless you choose a pattern. If you do, update both phones before sending an update file: the file needs 2.16."],
+  "2.16.1":["A payday or transfer day on an England and Wales bank holiday now moves to the working day before, as it does for a weekend. Scotland's and Northern Ireland's holidays aren't included.",
+  "So around Christmas, Easter and the May and August bank holidays, Dovetail can open on the next month and send its reminder for the day a few days sooner, and a reminder due then can show under the next month. Your transfers and shares don't change.",
+  "Paid on the 6th, moved for weekends? April 2026's day is now Thursday 2 April (6 April was Easter Monday), so that month's savings count in the 2025\u201326 tax year."],
+  "2.17":["Paid weekly, every two weeks or every four weeks? Add a recent payday in Settings \u203a People and Dovetail counts your paydays: it opens the extra payday line itself, says when a month has fewer than usual, and shows extra paydays in the months ahead.",
+  "Nothing changes in your figures unless you add a payday date. If you do, update both phones before sending an update file: the file needs 2.17."],
+  "2.18":["A new first screen for anyone setting up Dovetail: a picture of a finished payday, and what Dovetail never does (no bank login, no internet). Nothing changes in your figures."]};
 /* The versions with lines after "from" (the version last opened; missing means before them all) up to "to", newest first. */
 function whatsNewVersions(list,from,to){return Object.keys(list).filter(function(v){return list[v].length&&versionBefore(from,v)&&!versionBefore(to,v)})
   .sort(function(a,b){return versionBefore(a,b)?1:versionBefore(b,a)?-1:0})}
@@ -668,10 +872,12 @@ function keyRow(list){var key=el("div","keyrow");list.forEach(function(k){var sp
 function actualKeys(list,colour){var out=[];if(list.some(function(x){return x.actual}))out.push({colour:colour,label:"Actual (pay typed in)"});if(list.some(function(x){return !x.actual}))out.push({colour:colour,label:"Estimated",hatch:true});return out}
 function monthCell(x){return mShort(x.k)+(x.actual?" (actual)":"")}
 function goBills(){billQuery="";billFilter="";openSettings("sBills")}
+/* Something for Analysis to show: bills (or, 2.14, a rough figure for them), budgets or savings. */
+function hasOutgoings(){return !!(cfg.bills.length||cfg.budgets.length||cfg.savings.length||arr(cfg.estimates).length)}
 
 function renderAnalysis(){
   if(!cfg.setupDone)return;var box=clear($("analysis")),k=monthKey;rsW=$("main").clientWidth;
-  if(!cfg.bills.length&&!cfg.budgets.length&&!cfg.savings.length){var e=el("div","empty");e.appendChild(el("div",null,"Add your bills, spending budgets and savings in Settings to see where your money goes."));
+  if(!hasOutgoings()){var e=el("div","empty");e.appendChild(el("div",null,"Add your bills, spending budgets and savings in Settings to see where your money goes."));
     var b=el("button","btn",cfg.bills.length?"Open Settings":"Add bills");b.style.marginTop="10px";b.addEventListener("click",goBills);e.appendChild(b);box.appendChild(e)}
   [anMonths,anPicture,anCategories,anHistory,anSaved,anPrices,anTopUps].forEach(function(f){var c=f(k);if(c)box.appendChild(c)});
 }
@@ -683,7 +889,7 @@ function renderAnalysis(){
    one such account the short ones are named ("Sam's account short by £100.00"), since the total left over can hide them;
    with one, the words are as before. The tightest month is the one with the biggest shortfall, then the least left. */
 function anMonths(k){
-  if(!cfg.bills.length&&!cfg.budgets.length&&!cfg.savings.length)return null;
+  if(!hasOutgoings())return null;
   var keys=chartMonths(k),r=projectedFloat(cfg,months,k,keys),h=heavyLight(cfg,months,k,keys),c=anCard("anMonths","Month by month");
   var gap=function(x){return sum(x.shortBy,function(s){return s.amount})};
   var ahead=r.filter(function(x){return x.k>=k}),now=ahead[0],shortM=ahead.filter(function(x){return x.short}),low=ahead.reduce(function(a,x){var d=gap(x)-gap(a);return d>0.004||(d>=-0.004&&x.float<a.float)?x:a},ahead[0]);
@@ -723,16 +929,18 @@ function anPicture(k){
   // 2.13: an account short in the average month is named, not netted into the average left over without a word.
   if(r.income>0&&r.shortBy.length){var asl=el("div","lead","In an average month, "+listAnd(r.shortBy.map(function(s,i){return accName(s.id)+(i?" by ":" is short by ")+fmt(s.amount)}))+". The average left over is after that.");asl.id="anPictureShort";c.appendChild(asl)}
   // Each person's pay (an average of the months typed in, or their usual pay) is in the figures, under Income.
-  var inc=r.incomeDetail,of=function(v){return r.income>0?pct(v/r.income):""},incRows=inc.people.map(function(p){return [(p.name?p.name+"'s pay":"Pay")+(p.months?" (average of "+plural(p.months,"month")+")":" (usual pay)"),fmt(p.avg),of(p.avg)]});
+  // 2.16: someone on a pattern: "Kerry's pay (about £1,690.00 a month: £1,560.00 every four weeks)"; 2.17, with a recent
+  // payday, the measured average: "Jordan's pay (about £1,837.62 a month: an average of £424.07 a payday over 6 months)".
+  var inc=r.incomeDetail,of=function(v){return r.income>0?pct(v/r.income):""},incRows=inc.people.map(function(p){return [incomeLabel(p),fmt(p.avg),of(p.avg)]});
   if(inc.other)incRows.push(["Other income",fmt(inc.other),of(inc.other)]);
   if(inc.board)incRows.push(["Board",fmt(inc.board),of(inc.board)]);
   tableToggle(c,"anPictureTable",["","A month","Of income"],[["Income",fmt(r.income),r.income>0?"100%":""]].concat(incRows,segs.map(function(s){return [s.label,fmt(s.value),of(s.value)]})));
   return c}
 function anCategories(){
   var r=byCategory(cfg),c=anCard("anCategories","Where the money goes");
-  if(!cfg.bills.length){c.appendChild(el("div","empty","No bills yet. Add them in Settings › Bills."));return c}
+  if(!cfg.bills.length&&!r.unlisted){c.appendChild(el("div","empty","No bills yet. Add them in Settings › Bills."));return c}
   c.appendChild(el("div","lead",fmt(r.annual)+" a year on bills, "+fmt(r.monthly)+" a month."));
-  var max=Math.max.apply(null,r.groups.map(function(g){return g.annual}))||1,list=el("div");
+  var u=r.unlisted,max=Math.max.apply(null,r.groups.map(function(g){return g.annual}).concat(u?[u.annual]:[]))||1,list=el("div");
   function toggle(row,bl,key){row.addEventListener("click",function(){var open=bl.hidden;openCat=open?key:null;c.querySelectorAll(".catbills").forEach(function(x){x.hidden=true});c.querySelectorAll(".catrow").forEach(function(x){x.setAttribute("aria-expanded","false")});
     bl.hidden=!open;row.setAttribute("aria-expanded",open?"true":"false");if(open)reveal(bl)})}
   // Subscriptions and memberships: a highlighted line at the top that opens the list.
@@ -752,8 +960,13 @@ function anCategories(){
     g.bills.forEach(function(b){var d=el("div","row sub");d.appendChild(el("span","k",b.name+(b.perYear<12?" ("+b.perYear+"× a year)":"")));d.appendChild(el("span","v",fmt(b.monthly)+" a month · "+fmt(b.annual)+" a year"));bl.appendChild(d)});
     if(!g.key){var nb=el("button","linkbtn","Give these bills a category in Settings › Bills");nb.addEventListener("click",function(){billQuery="";goBills()});bl.appendChild(nb)}
     toggle(row,bl,key);list.appendChild(row);list.appendChild(bl)});
+  // 2.14: bills not listed yet (what rough figures have over the bills listed) aren't a category: their own bar after the
+  // categories, hatched as estimated months are, and in the totals and shares.
+  if(u){var ur=el("div","catrow figrow");ur.id="cat_unlisted";ur.appendChild(el("span",null,"Not listed yet"));ur.appendChild(el("span","num",fmt(u.annual)+" a year"));
+    var ut=el("span","track");ut.setAttribute("aria-hidden","true");var ui=el("i","hatch");ui.style.width=Math.max(1,u.annual/max*100)+"%";ut.appendChild(ui);ur.appendChild(ut);
+    ur.appendChild(el("span","sub",fmt(u.monthly)+" a month · "+pct(u.share)+" of bills · from your rough figure"+(u.accounts.length>1?"s":"")+" for "+listAnd(u.accounts.map(function(x){return accName(x.account)}))));list.appendChild(ur)}
   c.appendChild(list);
-  tableToggle(c,"anCategoriesTable",["Category","A year","A month","Share"],r.groups.map(function(g){return [g.name,fmt(g.annual),fmt(g.monthly),pct(g.share)]}));
+  tableToggle(c,"anCategoriesTable",["Category","A year","A month","Share"],r.groups.map(function(g){return [g.name,fmt(g.annual),fmt(g.monthly),pct(g.share)]}).concat(u?[["Not listed yet",fmt(u.annual),fmt(u.monthly),pct(u.share)]]:[]));
   return c}
 /* Pay and float history: only once there are two months to compare. 2.13: a month short by the one rule is red, and
    with more than one account keeping what's left its reading and the figures name the short ones. */
@@ -764,7 +977,9 @@ function anHistory(k){
   columnChart(fb,{items:h.map(function(x){return {label:MS[mNum(x.k)-1],value:x.float,neg:x.short,current:x.k===k}}),height:170,
     ariaLabel:"Left over each month from "+mLabel(h[0].k)+" to "+mLabel(h[h.length-1].k)+"."+(inH?" "+mLabel(k)+" (this month) is outlined.":"")+" Use the arrow keys to read each month and its pay.",
     tip:function(i){var x=h[i];return [mLabel(x.k)+(x.k===k?" (this month)":"")+": "+fmt(x.float)+" left over"+named(x)].concat(cfg.people.map(function(p){return (p.name||"Pay")+": "+(x.pay[p.id]==null?"not typed":fmt(x.pay[p.id]))}))}});
-  tableToggle(c,"anHistoryTable",["Month"].concat(cfg.people.map(function(p){return p.name||"Pay"})).concat(["Left over"]),h.map(function(x){return [mShort(x.k)].concat(cfg.people.map(function(p){return x.pay[p.id]==null?"–":fmt(x.pay[p.id])})).concat([fmt(x.float)+named(x)])}));
+  // 2.16: the pay used; an extra payday set aside says so ("£1,480.80 (£370.20 set aside)").
+  var aside=function(x,p){var a=x.setAside&&x.setAside[p.id];return a>0.004?" ("+fmt(a)+" set aside)":""};
+  tableToggle(c,"anHistoryTable",["Month"].concat(cfg.people.map(function(p){return p.name||"Pay"})).concat(["Left over"]),h.map(function(x){return [mShort(x.k)].concat(cfg.people.map(function(p){return x.pay[p.id]==null?"–":fmt(x.pay[p.id])+aside(x,p)})).concat([fmt(x.float)+named(x)])}));
   return c}
 function anSaved(k){
   var r=savedSoFar(cfg,months,k),c=anCard("anSaved","Saved so far");
@@ -853,7 +1068,7 @@ function renderDue(){
   // Until the month has been changed here once, a hint says the month bar above is what this section follows.
   if(remMonthHint){var mh=el("div","remmh"),hint=el("span","small muted remhint"),ar=el("span",null,"\u2039 \u203a ");ar.setAttribute("aria-hidden","true");hint.id="remMonthHint";
     hint.appendChild(ar);hint.appendChild(document.createTextNode("change month above"));mh.appendChild(h2);mh.appendChild(hint);s2.appendChild(mh)}else s2.appendChild(h2);
-  s2.appendChild(el("div","small muted",paydayFor(cfg.payday,monthKey)?shortDate(w.from)+" to "+shortDate(w.to)+", between paydays":"The calendar month"));
+  s2.appendChild(el("div","small muted",paydayFor(cfg.payday,monthKey)?shortDate(w.from)+" to "+shortDate(w.to)+", between "+dayWord(cfg)+"s":"The calendar month"));
   if(!mon.length)s2.appendChild(el("div","small muted","Nothing due in "+mLabel(monthKey)+"."));
   mon.forEach(function(it){s2.appendChild(above[it.key]?remNote(it):remRow(it,"m"))});box.appendChild(s2);
   if(up.length){// Opened for this redraw only when the open editor is in it; that doesn't count as the user opening it.
@@ -909,16 +1124,19 @@ function renewForm(it){
   if(it.kind==="bill"){amt=textIn(dr.amount!=null?dr.amount:Number(it.amount).toFixed(2),function(v){dr.amount=v},"na_"+id,true);f.appendChild(labeled("New amount for each payment (£)",amt))}
   f.appendChild(labeled("Next renewal date",nd));
   var msg=el("div","hint");f.appendChild(msg);
-  var sb=el("button","btn","Save");sb.addEventListener("click",function(){
+  var sb=el("button","btn","Save");sb.addEventListener("click",function(){var rise="";
     if(!validDate(nd.value)){msg.className="hint err";msg.textContent="Choose the next date.";return}
     var r=amt?parseMoney(amt.value,false):{empty:true};if(r.invalid){msg.className="hint err";msg.textContent="Enter an amount like 142.50";return}
-    if(it.kind==="bill"){var b=it.ref,old=num(b.amount),before=itemSnap("bills",b),was0=validDate(b.renews)?b.renews.slice(0,7):null;if(!r.empty)b.amount=r.value;b.renews=nd.value;
+    if(it.kind==="bill"){var b=it.ref,old=num(b.amount),before=itemSnap("bills",b),was0=validDate(b.renews)?b.renews.slice(0,7):null,fsnap=figSnap();if(!r.empty)b.amount=r.value;b.renews=nd.value;
       b.history=arr(b.history);b.history.push({on:todayStr(),date:nd.value,from:old,to:num(b.amount)});if(perYear(b)===1)b.months=[Number(nd.value.slice(5,7))];
       // 2.12: the new price (and month) from the month it renews in, or this pay month if that's later.
       dated("bills",b,before,was0);
-      logDone(it.name+" renewed"+(!r.empty&&Math.abs(r.value-old)>0.004?" at "+fmt(r.value)+" (was "+fmt(old)+")":" at the same price")+", next "+fmtDate(nd.value));saveCfg(true)}
+      logDone(it.name+" renewed"+(!r.empty&&Math.abs(r.value-old)>0.004?" at "+fmt(r.value)+" (was "+fmt(old)+")":" at the same price")+", next "+fmtDate(nd.value));saveCfg(true);
+      // 2.14: a new price inside a rough figure (5.7); one that takes the bills past it is asked about in Settings › Bills.
+      cfg.accounts.forEach(function(a){if(estimateJustPassed(fsnap,cfg,a.id))figAsk=a.id});rise=figRise(b,old,fsnap);
+      if(figAsk===b.account&&estimatePassed(cfg,b.account))rise=possessive(accName(b.account))+" bills now add up to more than its rough figure: Settings \u203a Bills asks if that's all of them."}
     else{it.ref.date=nd.value;logDone(it.name+" done, next "+fmtDate(nd.value));saveCfg(true)}
-    renewing=null;toast("Saved. Next reminder: "+fmtDate(nd.value));keepScroll(renderDue);renderPay()});
+    renewing=null;toast("Saved."+(rise?" "+rise:"")+" Next reminder: "+fmtDate(nd.value));keepScroll(renderDue);renderPay()});
   var cb=el("button","btn ghost","Cancel");cb.addEventListener("click",function(){renewing=null;keepScroll(renderDue)});var row=el("div","btnrow");row.appendChild(sb);row.appendChild(cb);f.appendChild(row);
   return f;
 }
@@ -945,7 +1163,7 @@ var remT=null;
 /* ---------- SETTINGS ---------- */
 var cfgT=null;function queueCfg(){clearTimeout(cfgT);cfgT=setTimeout(function(){saveCfg();afterCfgChange()},600)}
 function cfgNow(){clearTimeout(cfgT);saveCfg();afterCfgChange()}
-var paySig="";function peopleSig(){return JSON.stringify(cfg.people.map(function(p){return [p.id,p.name]}))}
+var paySig="";function peopleSig(){return JSON.stringify(cfg.people.map(function(p){return p.pattern?[p.id,p.name,p.pattern]:[p.id,p.name]}))}
 function afterCfgChange(){var s=peopleSig();if(s!==paySig){paySig=s;renderPayInputs()}renderPay();updateSums()}
 var openBill=null,arm=null,delAcct=null,showBackup=false,restoreText="",restoreArm=false,restoreMsg="";
 function labeled(t,input){var f=el("div");var l=el("label","lbl",t);l.htmlFor=input.id;f.appendChild(l);f.appendChild(input);return f}
@@ -963,25 +1181,33 @@ function openSettings(id,inner){goTab("settings");var d=$(id);if(!d)return null;
 function money2(v){return Number(num(v)).toFixed(2)}
 function updateSums(){
   var pc=cfg.payday||{};$("sumPayday").textContent=!pc.day?"Not set":pc.day==="last"?"Last working day":ordinal(Number(pc.day));
+  // 2.16: the card's title is "Transfer day" once anyone is on a pattern.
+  var sp=$("sPayday").querySelector("summary").firstChild;if(sp&&sp.nodeType===3)sp.nodeValue=dayWord(cfg,true);
   $("sumPeople").textContent=plural(cfg.people.length,"person","people");$("sumAccounts").textContent=plural(cfg.accounts.length,"account");
   $("sumBills").textContent=plural(cfg.bills.length,"bill");$("sumIncome").textContent=cfg.income.length?fmt(cfg.income.reduce(function(t,i){return t+num(i.amount)},0)):"None";
   $("sumLook").textContent=optName(THEMES,cfg.appearance.theme)+" · "+optName(TEXTS,cfg.appearance.textSize);
   $("sumNotify").textContent=cfg.notify.on?"On, "+cfg.notify.time:"Off";
   $("sumBudget").textContent=fmt(cfg.budgets.reduce(function(t,b){return t+num(b.amount)},0));$("sumSavings").textContent=fmt(cfg.savings.reduce(function(t,s){return t+num(s.amount)},0))}
+/* 2.16.1: the Payday note's last sentence (payperiods.md 13.1, H4): which bank holidays move a payday or transfer day. */
+var HOLIDAYS_KNOWN="It knows England and Wales bank holidays, not Scotland's, Northern Ireland's or one-off ones.";
+/* 2.16: once anyone is on a pattern this is the transfer day (dayWord), and it can't be unset (5.3.2): there's no "Not set". */
+var DAY_OPTS=(function(){var o=[];for(var i=1;i<=31;i++)o.push([String(i),ordinal(i)+" of the month"]);o.push(["last","Last working day of the month"]);return o})();
 function renderPaydaySet(){
-  var box=clear($("setPayday")),pc=cfg.payday;
-  box.appendChild(el("div","small muted","Tell Dovetail when your pay arrives. It then opens on the right pay month and shows when your next payday is."));
-  var opts=[["","Not set"]];for(var i=1;i<=31;i++)opts.push([String(i),ordinal(i)+" of the month"]);opts.push(["last","Last working day of the month"]);
-  box.appendChild(labeled("Payday",selectIn(opts,pc.day!=null?String(pc.day):"",function(v){if(!v)delete pc.day;else pc.day=v==="last"?"last":Number(v);cfgNow();keepScroll(renderPaydaySet)},"pay_day")));
-  if(pc.day&&pc.day!=="last")box.appendChild(checkIn("If it falls on a weekend, we're paid the Friday before",pc.weekend!==false,function(v){pc.weekend=v;cfgNow();keepScroll(renderPaydaySet)},"pay_wk"));
+  var box=clear($("setPayday")),pc=cfg.payday,pat=hasPatterns(cfg);
+  box.appendChild(el("div","small muted",pat?"The day each month you make the transfers. Pay that's arrived since the last one counts towards the next.":"Tell Dovetail when your pay arrives. It then opens on the right pay month and shows when your next payday is."));
+  var opts=(pat&&pc.day?[]:[["",pat?"Choose a day":"Not set"]]).concat(DAY_OPTS);
+  box.appendChild(labeled(dayWord(cfg,true),selectIn(opts,pc.day!=null?String(pc.day):"",function(v){if(!v)delete pc.day;else pc.day=v==="last"?"last":Number(v);cfgNow();keepScroll(renderPaydaySet);focusOn("#pay_day")},"pay_day")));
+  if(pc.day&&pc.day!=="last")box.appendChild(checkIn(pat?"If it falls on a weekend or bank holiday, do it on the working day before":"If it falls on a weekend or bank holiday, we're paid the working day before",pc.weekend!==false,function(v){pc.weekend=v;cfgNow();keepScroll(renderPaydaySet);focusOn("#pay_wk")},"pay_wk"));
   if(pc.day){var nx=nextPayday(payCfg());
-    if(nx)box.appendChild(el("div","banner good","Next payday: "+DAYS[dow(nx.date)]+" "+fmtDate(nx.date)+" ("+relDays(daysUntil(nx.date))+"). It pays for "+mLabel(nx.month)+"."));
-    box.appendChild(el("div","small muted","From 10 days before a payday, Dovetail opens on the month that pay is for. Bank holidays aren't taken into account."))}
+    if(nx)box.appendChild(el("div","banner good",pat?"Next transfer day: "+DAYS[dow(nx.date)]+" "+fmtDate(nx.date)+" ("+relDays(daysUntil(nx.date))+"). It's for "+mLabel(nx.month)+".":"Next payday: "+DAYS[dow(nx.date)]+" "+fmtDate(nx.date)+" ("+relDays(daysUntil(nx.date))+"). It pays for "+mLabel(nx.month)+"."));
+    box.appendChild(el("div","small muted",pat?"From 10 days before a transfer day, Dovetail opens on the month it's for. "+HOLIDAYS_KNOWN:"From 10 days before a payday, Dovetail opens on the month that pay is for. "+HOLIDAYS_KNOWN))}
 }
 function renderPayLine(){
-  var box=clear($("payLine")),pd=paydayFor(payCfg(),monthKey);
-  if(!pd){var b=el("button","linkbtn","Set your payday so Dovetail opens on the right month");b.addEventListener("click",function(){openSettings("sPayday")});box.appendChild(b);return}
-  var n=daysUntil(pd);box.textContent=(n>0?"Payday: ":n===0?"Payday is today: ":"Paid on ")+DAYS[dow(pd)]+" "+fmtDate(pd)+(n!==0?" ("+relDays(n)+")":"");
+  // 2.16: "Transfer day: Fri 30 Oct 2026 (in 8 days)" once anyone is on a pattern (dayWord).
+  var box=clear($("payLine")),pd=paydayFor(payCfg(),monthKey),pat=hasPatterns(cfg);
+  if(!pd){var b=el("button","linkbtn",pat?"Set your transfer day":"Set your payday so Dovetail opens on the right month");b.addEventListener("click",function(){openSettings("sPayday")});box.appendChild(b);return}
+  var n=daysUntil(pd);box.textContent=(pat?(n===0?"Transfer day is today: ":"Transfer day: "):n>0?"Payday: ":n===0?"Payday is today: ":"Paid on ")+DAYS[dow(pd)]+" "+fmtDate(pd)+(n!==0?" ("+relDays(n)+")":"");
+
 }
 function segRadios(name,legend,opts,val,on){var fs=el("fieldset","seg");fs.appendChild(el("legend","lbl",legend));var row=el("div","segrow");
   opts.forEach(function(o){var id=name+"_"+o[0],l=el("label"),r=el("input");r.type="radio";r.name=name;r.id=id;r.value=o[0];r.checked=o[0]===val;
@@ -1000,7 +1226,7 @@ function renderNotifySet(){
   var refocus=document.activeElement&&document.activeElement.id==="notify_on";
   var box=clear($("setNotify")),nt=cfg.notify,on=nativeNotifyOn();
   if(!notifyBusy&&nt.on!==on){nt.on=on;saveCfg(true)}
-  box.appendChild(el("div","small muted","Dovetail can remind you the day before payday, when a bill renewal or one of your reminders becomes due soon and on the day itself, and the day before a dated one-off. The notifications come from this phone; nothing is sent anywhere."));
+  box.appendChild(el("div","small muted","Dovetail can remind you the day before "+dayWord(cfg)+", when a bill renewal or one of your reminders becomes due soon and on the day itself, and the day before a dated one-off. The notifications come from this phone; nothing is sent anywhere."));
   var l=checkIn("Notify me about reminders",on,function(v){if(notifyBusy){sw.checked=!v;return}notifyBusy=true;notifyRefused=false;renderNotifySet();nativeCall(function(){NATIVE.setNotificationsEnabled(v)})},"notify_on"),sw=l.querySelector("input");
   if(notifyBusy)sw.setAttribute("aria-disabled","true");box.appendChild(l);
   if(notifyBusy)box.appendChild(el("div","small muted","Waiting for your phone…"));
@@ -1009,7 +1235,7 @@ function renderNotifySet(){
   tm.addEventListener("change",function(){if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(tm.value))return;nt.time=notifyTime(tm.value);tm.value=nt.time;saveCfg(true);flushSchedule();updateSums()});
   box.appendChild(labeled("Time of day (between 06:00 and 22:00)",tm));
   box.appendChild(checkIn("Show amounts in notifications",nt.amounts,function(v){nt.amounts=v;saveCfg(true);flushSchedule()},"notify_amounts"));
-  box.appendChild(el("div","small muted","Notifications can show on the lock screen, so amounts are left out unless you turn this on."+(payCfg().day?"":" Set your payday in Settings › Payday to get a reminder the day before.")));
+  box.appendChild(el("div","small muted","Notifications can show on the lock screen, so amounts are left out unless you turn this on."+(payCfg().day?"":" Set your "+dayWord(cfg)+" in Settings › "+dayWord(cfg,true)+" to get a reminder the day before.")));
   if(refocus){var nsw=$("notify_on");if(nsw)try{nsw.focus()}catch(e){}}}
 function renderLockSet(){
   var det=$("sLock");if(!NATIVE){det.hidden=true;return}det.hidden=false;
@@ -1050,25 +1276,104 @@ function renderAbout(){var box=clear($("about"));
   var wc=el("details","changed-v");wc.id="whatChanged";wc.appendChild(el("summary",null,"What changed"));
   whatsNewLists(wc,whatsNewVersions(WHATS_NEW,null,VERSION).slice(0,3),true);wc.appendChild(el("div",null,"Earlier versions aren't listed here."));box.appendChild(wc)}
 /* people */
+/* 2.16: "How often they're paid" (Settings › People and setup's step 2). */
+var EVERY_OPTS=[["","Every month"],["28","Every four weeks"],["14","Every two weeks"],["7","Every week"]];
+/* "About £1,690.00 a month over a year." */
+function aboutWords(p){return "About "+fmt(usualMonthly(p))+" a month over a year."}
 function renderPeopleSet(){
   var box=clear($("setPeople"));box.appendChild(el("div","small muted","Everyone whose take-home pay goes into the household. You type each person's pay on the Pay tab each month."));
-  cfg.people.forEach(function(p,i){var d=el("div","box"),g=el("div","grid2");d.id="person_"+safeId(p.id);
-    g.appendChild(labeled("Name",textIn(p.name,function(v){p.name=v;queueCfg()},"pp_n_"+safeId(p.id))));
-    g.appendChild(labeled("Usual take-home pay (£)",textIn(p.usualPay?money2(p.usualPay):"",function(v){var r=parseMoney(v,false);if(r.invalid)return;p.usualPay=r.value||0;queueCfg()},"pp_u_"+safeId(p.id),true)));d.appendChild(g);
+  var orders=hasPatterns(cfg)?standingOrders(cfg,months,thisMonth()):{};
+  cfg.people.forEach(function(p,i){var d=el("div","box"),g=el("div","grid2"),sid=safeId(p.id),before=personSnap(p),note,ab=null,t=patternOf(p);d.id="person_"+sid;
+    g.appendChild(labeled("Name",textIn(p.name,function(v){p.name=v;queueCfg()},"pp_n_"+sid)));
+    // 2.15: with earlier months saved, a change to usual pay applies from this pay month; the line under it says so.
+    // 2.16: for someone on a pattern the field is pay each time, dated the same way (usual pay is worked out from it).
+    g.appendChild(labeled(t?"Take-home pay each time (£)":"Usual take-home pay (£)",textIn(t?money2(t.each):p.usualPay?money2(p.usualPay):"",function(v){var r=parseMoney(v,false);if(r.invalid)return;
+      if(t){if(!(r.value>0)||r.value>PAY_EACH_MAX)return;p.pattern=Object.assign({},p.pattern,{each:r2(r.value)});p.usualPay=usualMonthly(p);if(ab)sayLater(ab,aboutWords(p))}else p.usualPay=r.value||0;
+      datedPay(p,before);fillDatedNote(note,"people",p,redraw);queueCfg()},"pp_u_"+sid,true)));d.appendChild(g);
+    function redraw(){keepScroll(renderPeopleSet)}
+    note=datedNote("people",p,"pp_d_"+sid,redraw,"pp_u_"+sid);d.appendChild(note);
+    var fs=selectIn(EVERY_OPTS,t?String(t.every):"",function(v){changeEvery(p,v?Number(v):null,fs)},"pp_f_"+sid);d.appendChild(labeled("How often they're paid",fs));
+    if(t){ab=el("div","small muted",aboutWords(p));ab.id="pp_m_"+sid;ab.setAttribute("aria-live","polite");d.appendChild(ab);
+      // 2.17 (13.2, L4, L15): a recent payday, written straight to the pattern (never dated: it's a correction, not a change
+      // of pay). Clearing it removes the first pay (since) too. Under it, when the next payday is.
+      var nl=el("div","small");nl.id="pp_next_"+sid;nl.setAttribute("aria-live","polite");
+      d.appendChild(paydayField("pp_on_"+sid,t.on,function(v,bad){if(bad)return;var o=Object.assign({},p.pattern);if(v)o.on=v;else{delete o.on;delete o.since}
+        if(o.on===p.pattern.on&&o.since===p.pattern.since)return;p.pattern=o;cfgNow();fillNextPayday(nl,p)}));
+      fillNextPayday(nl,p);d.appendChild(nl)}
     d.appendChild(labeled("Paid into",selectIn(accountOptions(cfg,cfg.accounts.filter(function(x){return x.closedFrom&&x.id!==p.payAccount}).map(function(x){return x.id})),p.payAccount,function(v){p.payAccount=v;cfgNow();keepScroll(renderSettings)},"pp_a_"+safeId(p.id))));
-    d.appendChild(el("div","small muted","Usual pay is used until you type the pay that actually arrived."));
+    // 2.16 (5.3.6): standing orders from each pay that cover every month, or why there's no figure (a move of what's left).
+    var so=t&&orders[p.id];
+    if(so&&so.orders.length){var sl=el("div","small");sl.id="pp_so_"+sid;sl.appendChild(el("b",null,"Standing orders that cover every month: "));
+      sl.appendChild(document.createTextNode(so.orders.map(orderWords).join("; ")+". Once they're set up, tick these transfers each month when they've gone."));d.appendChild(sl)}
+    else if(so&&so.moveTo){var ml=el("div","small",possessive(p.name||"Their")+" pay goes on to "+accName(so.moveTo)+" in one transfer on your transfer day, so there's no fixed amount for a standing order. To pay "+accName(so.moveTo)+" from each pay instead, make it send what's left to "+accName(p.payAccount)+" in Settings › Accounts: Dovetail then tops it up, and shows a standing order that covers it.");ml.id="pp_so_"+sid;d.appendChild(ml)}
+    if(!t)d.appendChild(el("div","small muted","Usual pay is used until you type the pay that actually arrived."));
     // 2.12.1: someone paying board keeps the rest of their money: their account isn't in the household's left over.
     // Offered when it counts: their account is their own, keeps what's left, and nobody else pays into it.
     var bid="pp_b_"+safeId(p.id),counts=!!boarderAccounts(Object.assign({},cfg,{people:cfg.people.map(function(q){return q===p?Object.assign({},q,{boarder:true}):q})}))[p.payAccount];
     if(cfg.people.length>1&&(p.boarder||(i>0&&counts))){var bc=checkIn("Pays board, and keeps the rest of their money",p.boarder===true,function(v){if(v)p.boarder=true;else delete p.boarder;cfgNow();keepScroll(renderSettings);var e=$(bid);if(e)try{e.focus({preventScroll:true})}catch(x){}},bid);d.appendChild(bc);
-      var bh=el("div","small muted",counts?"Their board is set in Settings \u203a Accounts \u203a Paid for by. What's left in their own account isn't counted in what the household has left.":"This only counts when their pay goes into an account of their own that keeps what's left and nobody else pays into.");bh.id=bid+"_h";d.appendChild(bh);bc.querySelector("input").setAttribute("aria-describedby",bh.id)}
+      var bh=el("div","small muted",BOARD_IS+" "+(counts?"Their board is set in Settings \u203a Accounts \u203a Paid for by. What's left in their own account isn't counted in what the household has left.":"This only counts when their pay goes into an account of their own that keeps what's left and nobody else pays into."));bh.id=bid+"_h";d.appendChild(bh);bc.querySelector("input").setAttribute("aria-describedby",bh.id)}
     if(cfg.people.length>1){var br=el("div","btnrow");br.appendChild(confirmBtn("person"+p.id,"Remove "+(p.name||"person"),function(){cfg.people.splice(i,1);cfgNow();keepScroll(renderSettings)}));d.appendChild(br)}
     box.appendChild(d)});
   var add=el("button","linkbtn","+ Add a person");add.addEventListener("click",function(){var np={id:uid("p"),name:"",payAccount:(cfg.accounts[0]||{}).id,usualPay:0};cfg.people.push(np);cfgNow();keepScroll(renderPeopleSet);var f=$("pp_n_"+safeId(np.id));if(f){reveal($("person_"+safeId(np.id)));f.focus()}});box.appendChild(add);
 }
+/* 2.17: "Next payday: Fri 6 Nov, then every week." under a recent payday (it shows up a date typed as a holiday-moved
+   one), or nothing without a date. */
+function fillNextPayday(n,p){clear(n);var t=datedPattern(p),nx=t?nextPaydayOf(t,todayStr()):null;n.hidden=!nx;if(!nx)return;
+  n.appendChild(document.createTextNode("Next payday: "));n.appendChild(shortDates(nx));n.appendChild(document.createTextNode(", then every "+PAY_EVERY[t.every].word+"."))}
+/* 2.17 (13.2, L15): dates as the screen shows them, short ("Fri 30 Oct" for one day, a string; for a list "30 Oct, 6 and
+   13 Nov"), hidden from screen readers and followed by the full dates in a .sr span ("Friday 30 October"; "30 October, 6
+   and 13 November"). */
+function shortDates(x){var one=typeof x==="string",f=document.createDocumentFragment(),a=el("span",null,one?shortDay(x):datesWords(x));a.setAttribute("aria-hidden","true");
+  f.appendChild(a);f.appendChild(el("span","sr",one?dayDate(x):datesWordsFull(x)));return f}
+/* 2.17 (13.2, L5): after a change of how often person pid is paid (settings before it: cBefore), each saved month whose
+   interval for them changed loses its count and an untouched extra payday, and is counted again with the new pattern. */
+function refreezeEvery(cBefore,pid){if(saveT){clearTimeout(saveT);saveT=null;flushMonth()}var ks=intervalChangedMonths(cBefore,cfg,months,pid);if(!ks.length)return;months=refreezeInterval(cfg,months,pid,ks,cBefore);saveMonths();
+  if(ks.indexOf(monthKey)>=0){cur=months[monthKey]?clone(months[monthKey]):null;xFresh()}}
+/* 2.16: a guess at pay each time for every days from what someone's paid now (their pay over a year, spread). */
+function guessEach(p,every){var t=patternOf(p),m=t?usualMonthly(p):num(p.usualPay);return every?r2(m*12/PAY_EVERY[every].year):r2(m)}
+/* 2.16 (5.3.7, E8, E13): "How often they're paid" changed to every (7, 14 or 28, or null for every month). With months
+   saved before this pay month, or a pattern chosen with no transfer day set, a sheet asks for the pay (and the transfer
+   day) and the change applies from the month the app opens on; otherwise the fields just change. */
+function changeEvery(p,every,sel){var t=patternOf(p);if((t?t.every:null)===every)return;
+  if(datesEdits()||(every&&!payCfg().day)||!(guessEach(p,every)>0)&&every){openPayChange(p,every,sel);return}
+  var cBefore=clone(cfg);if(every){p.pattern={every:every,each:guessEach(p,every)};p.usualPay=usualMonthly(p)}else delete p.pattern;
+  refreezeEvery(cBefore,p.id);cfgNow();keepScroll(renderSettings);focusOn("#pp_f_"+safeId(p.id))}
+/* The sheet "{Name}'s pay from now on": pay each time (or usual pay, back to every month), "From {month}" with earlier
+   months saved, and the transfer day when none is set. Change applies it; Cancel or closing leaves everything as it was. */
+function openPayChange(p,every,sel){var sid=safeId(p.id),hist=datesEdits(),needDay=!!every&&!payCfg().day,k=thisMonth(),g=guessEach(p,every),nodes=[],day="",wk=true;
+  var pin=textIn(g>0?money2(g):"",function(){},"ppc_pay",true);pin.placeholder="0.00";nodes.push(labeled(every?"Take-home pay each time (£)":"Usual take-home pay (£)",pin));
+  if(hist){var fr=el("p","small","From "+mLabel(k)+".");fr.id="ppc_from";nodes.push(fr)}
+  if(hist&&every)nodes.push(el("p","small muted","Paid a week in hand? The first month will have fewer paydays, so type what arrived."));
+  // 2.17 (13.2, L7): the first pay on the new pattern (optional) becomes its recent payday (on) and first pay (since). When
+  // that pay is for a month after the one the app opens on, the change waits until Dovetail moves on to it.
+  var fpd=null,wait=null;if(every){fpd=el("input","inp");fpd.type="date";fpd.id="ppc_on";fpd.min="2000-01-01";fpd.max="2099-12-31";
+    var fh=el("div","small muted","As it usually falls, not one moved for a bank holiday.");fh.id="ppc_on_h";fpd.setAttribute("aria-describedby",fh.id);
+    nodes.push(labeled("When's the first pay on the new pattern?",fpd));nodes.push(fh);wait=el("p","small");wait.id="ppc_wait";wait.hidden=true;wait.setAttribute("aria-live","polite");nodes.push(wait)}
+  if(needDay){var dw=el("div");nodes.push(dw);(function drawDay(){clear(dw);dw.appendChild(labeled("Transfer day",selectIn([["","Choose a day"]].concat(DAY_OPTS),day,function(v){day=v;drawDay();focusOn("#ppc_day")},"ppc_day")));
+    if(day&&day!=="last")dw.appendChild(checkIn("If it falls on a weekend or bank holiday, do it on the working day before",wk,function(v){wk=v},"ppc_wk"))})()}
+  var msg=el("div","hint err");msg.id="ppc_msg";msg.setAttribute("aria-live","polite");nodes.push(msg);
+  var br=el("div","btnrow"),go=el("button","btn","Change");go.type="button";go.id="ppc_go";var cn=el("button","btn ghost","Cancel");cn.type="button";cn.id="ppc_cancel";
+  // L7: the transfer day the change would use (the one chosen here when none is set), and the first pay's month against it.
+  function newPc(){return needDay?(day?setupPayday({day:day,weekend:wk}):null):payCfg()}
+  function startLater(){var v=fpd&&fpd.value,pc=newPc();if(!fpd||!paydayDateOk(v)||!pc)return null;
+    var f=firstPayChange(Object.assign({},cfg,{payday:pc}),p.id,every,v);return f&&f.k>defaultMonth(pc)?f:null}
+  function checkStart(){if(!fpd)return;var l=startLater();wait.hidden=!l;go.disabled=!!l;wait.textContent=l?l.text:"";
+    if(l)go.setAttribute("aria-describedby","ppc_wait");else go.removeAttribute("aria-describedby")}
+  if(fpd){fpd.addEventListener("change",checkStart);fpd.addEventListener("blur",checkStart);if(needDay)dw.addEventListener("change",checkStart)}
+  go.addEventListener("click",function(){if(startLater())return;var r=parseMoney(pin.value,false),bad=every?(r.invalid||r.empty||!(r.value>0)||r.value>PAY_EACH_MAX):r.invalid;
+    pin.classList.toggle("bad",bad);if(bad){pin.setAttribute("aria-invalid","true");msg.textContent=every?"Type pay as an amount, like 420.00.":"Type pay as an amount, like 1850.00.";pin.focus();return}
+    if(needDay&&!day){msg.textContent="Choose a transfer day.";focusOn("#ppc_day");return}
+    var on=fpd&&fpd.value;if(paydayPart(fpd)){msg.textContent=PAYDAY_PART;fpd.focus();return}if(on&&!paydayDateOk(on)){msg.textContent=PAYDAY_BAD;fpd.focus();return}
+    var cBefore=clone(cfg),before=personSnap(p);if(every){p.pattern={every:every,each:r2(r.value)};if(on){p.pattern.on=on;p.pattern.since=on}p.usualPay=usualMonthly(p)}else{delete p.pattern;p.usualPay=r.empty?0:r2(r.value)}
+    datedPay(p,before);if(needDay){cfg.payday=cfg.payday||{};cfg.payday.day=day==="last"?"last":Number(day);if(day!=="last")cfg.payday.weekend=wk}
+    refreezeEvery(cBefore,p.id);cfgNow();closeSheet()});
+  cn.addEventListener("click",function(){closeSheet()});br.appendChild(go);br.appendChild(cn);nodes.push(br);
+  openSheet(possessive(p.name||"Their")+" pay from now on",nodes,sel,{quietClose:true,onClose:function(){keepScroll(renderSettings)}})}
 /* accounts */
-function itemsOn(id){return {bills:cfg.bills.filter(function(b){return b.account===id}).length,income:cfg.income.filter(function(x){return x.account===id}).length,
-  budgets:cfg.budgets.filter(function(x){return x.account===id}).length,savings:cfg.savings.filter(function(x){return x.fromAccount===id}).length,people:cfg.people.filter(function(x){return x.payAccount===id}).length}}
+function itemsOn(id){
+return {bills:cfg.bills.filter(function(b){return b.account===id}).length,income:cfg.income.filter(function(x){return x.account===id}).length,
+  budgets:cfg.budgets.filter(function(x){return x.account===id}).length,savings:cfg.savings.filter(function(x){return x.fromAccount===id}).length,people:cfg.people.filter(function(x){return x.payAccount===id}).length,
+  estimates:arr(cfg.estimates).filter(function(x){return x.account===id}).length}}
 function renderAccountsSet(){
   var box=clear($("setAccounts"));
   // Changing how the household manages its money (2.12) takes the whole card until it's done or cancelled.
@@ -1093,7 +1398,7 @@ function acctEditor(a){
   var opts=[["","Keeps what's left (your left over)"]].concat(accountOptions(cfg,bad));
   d.appendChild(labeled("What's left moves to",selectIn(opts,parentId(cfg,a.id)||"",function(v){a.leftoverTo=v||null;cfgNow();keepScroll(renderSettings)},"ac_l_"+sid)));
   if(cfg.people.length&&!a.closedFrom)d.appendChild(acctFunding(a));
-  var n=itemsOn(a.id),parts=[];if(n.people)parts.push(plural(n.people,"person's pay","people's pay"));if(n.bills)parts.push(plural(n.bills,"bill"));if(n.income)parts.push(plural(n.income,"income"," incomes"));if(n.budgets)parts.push(plural(n.budgets,"budget"));if(n.savings)parts.push(plural(n.savings,"savings transfer"));
+  var n=itemsOn(a.id),parts=[];if(n.people)parts.push(plural(n.people,"person's pay","people's pay"));if(n.bills)parts.push(plural(n.bills,"bill"));if(n.income)parts.push(plural(n.income,"income"," incomes"));if(n.budgets)parts.push(plural(n.budgets,"budget"));if(n.savings)parts.push(plural(n.savings,"savings transfer"));if(n.estimates)parts.push("its rough figure");
   d.appendChild(el("div","small muted",parts.length?"Uses: "+parts.join(", ")+".":"Nothing uses this account yet."));
   if(cfg.accounts.filter(function(x){return !x.closedFrom}).length>1&&!a.closedFrom){
     if(delAcct===a.id){var mv=el("div","box");mv.style.background="var(--surface)";
@@ -1166,6 +1471,107 @@ function deleteAccount(id,target){
   Object.keys(months).forEach(function(k){arr(months[k]&&months[k].oneOffs).forEach(function(o){if(o&&o.account===id)o.account=target})});
   if(cur)arr(cur.oneOffs).forEach(function(o){if(o.account===id)o.account=target});
   saveMonths();delAcct=null;cfgNow();keepScroll(renderSettings);toast((a.name||"Account")+" deleted")}
+/* ---------- the rough figure after setup (2.14, docs/onboarding.md 5.6 to 5.8) ----------
+   An account's rough figure (cfg.estimates) is shown as what's listed and what's "not listed yet": on the Pay tab under
+   the transfer into the account, on its card, in Bills by account, and in Settings › Bills, which has Paste a list,
+   Change the figure and That's all of them for it. Questions come once, at the moment they matter: when the listed bills
+   go past the figure ("Is that all of them?", estimateJustPassed), and when a bill inside it is deleted ("Lower Joint's
+   figure by £30 too?", estimateDeleteOffer). Every change is a dated edit once months are saved before this pay month
+   (setEstimate, endEstimates, as bills are). The session's state, never saved: figEdit (the account whose figure is being
+   typed), figAsk (the account to ask "Is that all of them?" about), figOffer ({account, amount, figure, name}: the delete
+   offer) and figMsg ({account, text, change}: the last thing said, with a Change link when change is true). */
+var figEdit=null,figAsk=null,figOffer=null,figMsg=null;
+function figEst(id){return arr(cfg.estimates).filter(function(e){return e.account===id})[0]||null}
+/* The questions appear in Settings › Bills while focus is elsewhere (on the next bill, say): said in a live region too,
+   once the Undo bar has had its say. */
+var figLiveT=null;function figSay(t){var r=$("figLive");if(!r){r=el("div","sr");r.id="figLive";r.setAttribute("aria-live","polite");document.body.appendChild(r)}
+  clearTimeout(figLiveT);r.textContent="";figLiveT=setTimeout(function(){r.textContent=t},250)}
+/* The settings' figures and bills as they are now, to compare after a change (what estimateParts reads). */
+function figSnap(){return {estimates:clone(arr(cfg.estimates)),bills:cfg.bills.map(function(b){return {id:b.id,account:b.account,amount:b.amount,months:arr(b.months).slice()}})}}
+/* New figures from setEstimate or endEstimates (which return new settings): only the figures and endings are taken, so
+   everything else on screen keeps pointing at the settings it has. */
+function applyFig(next){["estimates","ended"].forEach(function(k){if(next[k]===undefined)delete cfg[k];else cfg[k]=next[k]})}
+/* After the bills changed (snap: figSnap() from before): an account whose listed bills have just gone past its figure is
+   the one to ask about. Its figure lines are redrawn in place, so focus stays where it is. Returns that account, or null. */
+function figAfter(snap){var ask=null;cfg.accounts.forEach(function(a){if(estimateJustPassed(snap,cfg,a.id))ask=a.id});if(ask){figAsk=ask;figOffer=null;figMsg=null;var p=estimateParts(cfg,ask);
+    figSay("Your bills now add up to "+fmt(p.listed)+", more than the "+fmt(p.figure)+" you put for "+accName(ask)+". Is that all of them? The question is under "+accName(ask)+".")}
+  cfg.accounts.forEach(function(a){refreshFig(a.id)});return ask}
+/* "Energy now £140. Joint's transfer doesn't change: it comes out of the £380 not listed yet." when a bill inside a figure
+   goes up and the bills are still within it (5.7). "" otherwise. */
+function figRise(b,old,snap){var p0=estimateParts(snap,b.account),p1=estimateParts(cfg,b.account),now=num(b.amount);
+  return now>old+0.004&&inFigure(b)&&p0.has&&p0.unlisted>0.004&&!p1.passed?(b.name||"Bill")+" now "+fmt(now)+". "+possessive(accName(b.account))+" transfer doesn't change: it comes out of the "+fmt(p0.unlisted)+" not listed yet.":""}
+/* "Joint: £1,120.00 listed · £380.00 not listed yet (your figure £1,500.00)", with a thin bar (what's listed, of the figure). */
+function figWords(id,p){var n=accName(id);return n+": "+fmt(p.listed)+" listed"+(p.passed?", more than your figure of "+fmt(p.figure):" · "+fmt(p.unlisted)+" not listed yet (your figure "+fmt(p.figure)+")")}
+function figLine(id,p,domId){var d=el("div","figsum");var t=el("p","small",figWords(id,p));if(domId){d.id=domId;t.id=domId+"_t"}d.appendChild(t);
+  var bar=el("div","figbar");bar.setAttribute("aria-hidden","true");var i=el("i");i.style.width=Math.max(2,Math.min(100,p.figure>0?p.listed/p.figure*100:100))+"%";bar.appendChild(i);d.appendChild(bar);return d}
+/* The good news when a figure ends (5.7), from working the month out before and after (estimateEndEffect), since shares
+   split the change: "All of Joint's bills are in. Your transfers for Joint are exact now. Alex's share goes down by £100
+   a month and Sam's by £100." */
+function figGoodNews(id,e){var nm=accName(id),t="All of "+possessive(nm)+" bills are in. Your transfers for "+nm+" are exact now.";
+  var down=e.people.filter(function(p){return p.change<-0.004});
+  if(down.length)return t+" "+listAnd(down.map(function(p,i){return possessive(p.name)+(i?" by "+fmt(-p.change):" share goes down by "+fmt(-p.change)+" a month")}))+".";
+  var into=e.steps.filter(function(s){return s.to===id&&s.change<-0.004}),sum=into.reduce(function(x,s){return x+s.change},0);
+  if(into.length)return t+" What goes into "+nm+" goes down by "+fmt(-sum)+" a month.";
+  return e.float>0.004?t+" That's "+fmt(e.float)+" more left over in "+mLabel(thisMonth())+".":t}
+function figSave(){var sc0=syncCount;saveCfg(true);if(syncCount!==sc0)return false;afterCfgChange();return true}
+/* A figure set from this pay month (setEstimate), or ended ("That's all of them", with Undo and the good news). */
+function figSet(id,v,msg){applyFig(setEstimate(cfg,id,v,thisMonth(),datesEdits()));figEdit=null;figAsk=null;figOffer=null;figMsg=msg?{account:id,text:msg,change:true}:null;if(!figSave())return;keepScroll(renderBillsList)}
+/* The figures and endings as they are now, to put back (Undo). */
+function figBefore(){return {estimates:cfg.estimates===undefined?undefined:clone(cfg.estimates),ended:cfg.ended===undefined?undefined:clone(cfg.ended)}}
+/* also: an Undo to run with this one (a bill's delete, when the figure ends because of it); focusSel: where Undo goes then. */
+function figEnd(id,also,focusSel){var nm=accName(id),k=thisMonth(),before=figBefore(),eff=estimateEndEffect(cfg,months,k,id);
+  applyFig(endEstimates(cfg,id,k,datesEdits()));figEdit=null;figAsk=null;figOffer=null;figMsg={account:id,text:figGoodNews(id,eff)};if(!figSave())return;keepScroll(renderBillsList);
+  var m=$("bf_"+safeId(id)+"_msg");if(m){m.tabIndex=-1;try{m.focus({preventScroll:true})}catch(x){}}
+  offerUndo(possessive(nm)+" rough figure ended"+(datesEdits()?" from "+mLabel(k):""),function(){applyFig(before);figMsg=null;if(also)also();else{figSave();rerender()}},also&&focusSel?focusSel:"#bf_"+safeId(id)+"_end")}
+/* What Settings › Bills shows for account id (in place of its "bf_" block): the line and bar, what adding bills does, the
+   questions, the editor and the buttons. Empty and hidden for an account with nothing to show. */
+function figBlock(id){var sid=safeId(id),d=el("div","figbox"),p=estimateParts(cfg,id),nm=accName(id),pre="bf_"+sid;d.id=pre;d.setAttribute("role","group");d.setAttribute("aria-label","Rough figure for "+possessive(nm)+" bills");
+  function btn(t,cls,bid,on,label){var b=el("button",cls,t);b.type="button";b.id=pre+"_"+bid;if(label)b.setAttribute("aria-label",label);b.addEventListener("click",on);return b}
+  if(figMsg&&figMsg.account===id){var m=el("div","banner good col");m.id=pre+"_msg";m.setAttribute("role","status");m.appendChild(el("div",null,figMsg.text));
+    if(figMsg.change&&p.has){var mr=el("div","btnrow");mr.appendChild(btn("Change","linkbtn","msgc",function(){figMsg=null;figEdit=id;refreshFig(id);focusOn("#"+pre+"_amt")},"Change "+possessive(nm)+" figure"));m.appendChild(mr)}d.appendChild(m)}
+  if(figOffer&&figOffer.account===id){var o=el("div","banner col"),ot=el("div",null,figOffer.name+" deleted. Lower "+possessive(nm)+" figure by "+fmt(figOffer.amount)+" too?");o.id=pre+"_offer";ot.id=pre+"_offer_t";
+    o.setAttribute("role","group");o.setAttribute("aria-labelledby",ot.id);o.appendChild(ot);var orow=el("div","btnrow");
+    // The delete's Undo would put the bill back but leave the figure lowered: "Lower it" offers one Undo for both.
+    orow.appendChild(btn("Lower it","btn","lower",function(){var f=figOffer,v=r2(f.figure-f.amount),del=$("undoBar").hidden?null:undoFn,back=figBefore(),bsel=f.bill?"#bill_"+safeId(f.bill)+" > button":null;
+      if(v<=0){figEnd(id,del,bsel);return}figSet(id,v,possessive(nm)+" figure is now "+fmt(v)+".");focusOn("#"+pre+"_msgc");
+      offerUndo(f.name+" deleted and "+possessive(nm)+" figure lowered to "+fmt(v),function(){applyFig(back);figMsg=null;if(del)del();else{figSave();rerender()}},del&&bsel?bsel:"#"+pre+"_change")}));
+    orow.appendChild(btn("Keep it","btn ghost","keep",function(){figOffer=null;refreshFig(id);focusOn("#"+pre+"_change")||focusOn("#billAdd_"+sid)}));o.appendChild(orow);d.appendChild(o)}
+  if(p.has){d.appendChild(figLine(id,p,pre+"_line"));
+    if(p.passed&&figAsk===id){var q=el("div","banner col"),qt=el("div",null,"Your bills now add up to "+fmt(p.listed)+", more than the "+fmt(p.figure)+" you put. Is that all of them?");q.id=pre+"_q";qt.id=pre+"_q_t";
+      q.setAttribute("role","group");q.setAttribute("aria-labelledby",qt.id);q.appendChild(qt);var qr=el("div","btnrow");
+      qr.appendChild(btn("That's all of them","btn","qall",function(){figEnd(id)}));
+      qr.appendChild(btn("There are more","btn ghost","qmore",function(){var v=estimateRoundUp(p.listed);figSet(id,v,possessive(nm)+" figure is now "+fmt(v)+".");focusOn("#"+pre+"_msgc")}));q.appendChild(qr);d.appendChild(q)}
+    if(!p.passed)d.appendChild(el("p","small muted","Adding bills won't change your transfers until they go past your figure."));
+    // A change of style since can make this an account a figure isn't offered on (5.9): it still counts.
+    var why=estimateBlock(cfg,id);
+    if(why==="board")d.appendChild(el("p","small","Their own money isn't part of the household's figures."));
+    else if(why)d.appendChild(el("p","small","With the way you share costs now, list your own bills here so the shares are fair. The figure still counts until you tap That's all of them."));
+    d.appendChild(el("p","small muted","If "+nm+" ran short before payday, the figure may be low."))}
+  if(figEdit===id){var ed=el("div","figedit"),inp=textIn(p.has?money2(p.figure):"",function(){},pre+"_amt",true),msg=el("div","hint");inp.placeholder="0.00";msg.id=pre+"_amsg";msg.setAttribute("aria-live","polite");
+    ed.appendChild(labeled("Rough figure for "+possessive(nm)+" bills each month (£)",inp));
+    if(!p.has)ed.appendChild(el("p","small muted","Count what leaves "+nm+" by itself: direct debits, standing orders and subscriptions. Count Council Tax as monthly, and list bills that come only a few times a year. Round up if you're unsure."));
+    ed.appendChild(msg);var er=el("div","btnrow");
+    var save=function(){var r=parseMoney(inp.value,false),listed=estimateParts({bills:cfg.bills,estimates:[{account:id,amount:0}]},id).listed;
+      if(r.empty||r.invalid||!(r.value>0)){msg.className="hint err";msg.textContent="Type an amount a month, like 1500.00.";inp.focus();return}
+      if(!p.has&&r.value<=listed){msg.className="hint err";msg.textContent="The bills listed for "+nm+" already come to "+fmt(listed)+", so a figure that size wouldn't add anything.";inp.focus();return}
+      figSet(id,r2(r.value),null);toast(possessive(nm)+" figure is now "+fmt(r2(r.value))+".");focusOn("#"+pre+"_change")};
+    inp.addEventListener("keydown",function(e){if(e.key==="Enter"){e.preventDefault();save()}});
+    er.appendChild(btn("Save","btn","save",save));
+    er.appendChild(btn("Cancel","btn ghost","cancel",function(){figEdit=null;refreshFig(id);focusOn(p.has?"#"+pre+"_change":"#"+pre+"_new")}));ed.appendChild(er);d.appendChild(ed)}
+  if(p.has){var e=figEst(id);if(e)d.appendChild(datedNote("estimates",e,pre+"_d",function(){refreshFig(id);afterCfgChange()},pre+"_change"));
+    var br=el("div","btnrow figbtns");
+    br.appendChild(btn("Paste a list","btn ghost","paste",function(){pasteSt={text:"",res:null,rows:[],acct:id};keepScroll(renderBillsSet);reveal($("pl"));focusOn("#pl_text")},"Paste a list of "+possessive(nm)+" bills"));
+    if(figEdit!==id)br.appendChild(btn("Change the figure","btn ghost","change",function(){figEdit=id;figMsg=null;refreshFig(id);focusOn("#"+pre+"_amt")},"Change the figure for "+possessive(nm)+" bills"));
+    br.appendChild(btn("That's all of them","btn ghost","end",function(){figEnd(id)},"That's all of "+possessive(nm)+" bills"));d.appendChild(br)}
+  if(!d.firstChild)d.hidden=true;return d}
+function refreshFig(id){var old=$("bf_"+safeId(id));if(old)old.parentNode.replaceChild(figBlock(id),old)}
+/* Settings › Bills › Paste a list (next to Quick add, and from an account's figure). */
+var pasteSt=null;
+function settingsPaste(){var accts=accountOptions(cfg,cfg.accounts.filter(function(a){return a.closedFrom}).map(function(a){return a.id}));
+  return pasteBox(pasteSt,{idp:"pl",accts:accts,def:pasteSt.acct&&accById(cfg,pasteSt.acct)?pasteSt.acct:defaultBillAccount(cfg),existing:cfg.bills,heading:"h3",
+    redraw:function(f){keepScroll(renderBillsSet);focusOn("#"+f)},onClose:function(){pasteSt=null;keepScroll(renderBillsSet);focusOn("#pasteBtn")},
+    onAdd:function(list){var snap=figSnap();list.forEach(function(x){var b={id:uid("b"),name:x.name,amount:x.amount,account:x.account,months:x.months};applyCategorySuggestion(b);cfg.bills.push(startsNow(b))});
+      pasteSt=null;if(!figSave())return;figAfter(snap);keepScroll(renderBillsSet);updateBadge();toast("Added "+plural(list.length,"bill"));focusOn("#pasteBtn")}})}
 /* bills */
 var billQuery="",billFilter="",quickRows=null;
 function renderBillsSet(){
@@ -1174,11 +1580,16 @@ function renderBillsSet(){
   q.addEventListener("input",function(){billQuery=q.value;keepScroll(renderBillsList)});tools.appendChild(q);
   var qa=el("button","btn ghost",quickRows?"Close quick add":"Quick add");qa.id="quickAddBtn";qa.setAttribute("aria-expanded",quickRows?"true":"false");
   qa.addEventListener("click",function(){quickRows=quickRows?null:newQuickRows(3,defaultBillAccount(cfg));keepScroll(renderBillsSet);if(quickRows){reveal($("qa_box"));var f=$("qa_n_0");if(f)f.focus()}});
-  tools.appendChild(qa);box.appendChild(tools);
+  tools.appendChild(qa);
+  // 2.14: Paste a list, next to Quick add (5.4).
+  var pb=el("button","btn ghost",pasteSt?"Close the list":"Paste a list");pb.id="pasteBtn";pb.type="button";pb.setAttribute("aria-expanded",pasteSt?"true":"false");
+  pb.addEventListener("click",function(){pasteSt=pasteSt?null:{text:"",res:null,rows:[],acct:null};keepScroll(renderBillsSet);if(pasteSt){reveal($("pl"));focusOn("#pl_text")}else focusOn("#pasteBtn")});
+  tools.appendChild(pb);box.appendChild(tools);
   var fc=el("div","fchips"),nm=el("button","fchip","Not monthly");nm.id="billNotMonthly";nm.type="button";nm.setAttribute("aria-pressed",billFilter==="notmonthly"?"true":"false");
   nm.addEventListener("click",function(){billFilter=billFilter?"":"notmonthly";nm.setAttribute("aria-pressed",billFilter?"true":"false");keepScroll(renderBillsList)});fc.appendChild(nm);box.appendChild(fc);
   if(quickRows)box.appendChild(quickAddBox(quickRows,accountOptions(cfg),"qa",{title:"Quick add bills",intro:"One row per bill. They're added as paid every month; open a bill afterwards to change its months or renewal date.",
-    addLabel:"Add these",onAdd:function(list){list.forEach(function(nb){cfg.bills.push(startsNow(nb))});quickRows=null;saveCfg(true);afterCfgChange();keepScroll(renderBillsSet);updateBadge();toast("Added "+plural(list.length,"bill"))}}));
+    addLabel:"Add these",onAdd:function(list){var snap=figSnap();list.forEach(function(nb){cfg.bills.push(startsNow(nb))});quickRows=null;saveCfg(true);afterCfgChange();figAfter(snap);keepScroll(renderBillsSet);updateBadge();toast("Added "+plural(list.length,"bill"))}}));
+  if(pasteSt)box.appendChild(settingsPaste());
   var list=el("div");list.id="billList";list.className="tab";list.style.gap="10px";box.appendChild(list);renderBillsList();
 }
 function billMatches(b,q){if(billFilter==="notmonthly"&&perYear(b)>=12)return false;return !q||String(b.name||"").toLowerCase().indexOf(q)>=0||(b.category&&categoryName(b.category).toLowerCase().indexOf(q)>=0)}
@@ -1186,8 +1597,14 @@ function renderBillsList(){
   var box=$("billList");if(!box)return;clear(box);var q=billQuery.trim().toLowerCase(),shown=0,narrowed=!!(q||billFilter);
   cfg.accounts.forEach(function(a){var bills=cfg.bills.filter(function(b){return b.account===a.id&&billMatches(b,q)});if(narrowed&&!bills.length)return;
     var h=el("div","accthead");h.appendChild(acctTag(a.id));if(bills.length)h.appendChild(el("span","num small muted",fmt(bills.reduce(function(t,b){return t+monthlyEquivalent(b)},0))+" a month"));box.appendChild(h);
+    // 2.14: the account's rough figure, if it has one (figBlock).
+    if(!narrowed)box.appendChild(figBlock(a.id));
     bills.forEach(function(b){shown++;box.appendChild(billEditor(b))});
-    if(!narrowed){var add=el("button","linkbtn","+ Add a bill paid from "+(a.name||"this account"));add.id="billAdd_"+safeId(a.id);add.addEventListener("click",function(){var nb=startsNow({id:uid("b"),name:"New bill",amount:0,account:a.id,months:[]});cfg.bills.push(nb);openBill=nb.id;cfgNow();keepScroll(renderBillsList);reveal($("bill_"+safeId(nb.id)));var f=$("bn_"+nb.id);if(f){f.focus();f.select()}});box.appendChild(add)}});
+    if(!narrowed){var add=el("button","linkbtn","+ Add a bill paid from "+(a.name||"this account"));add.id="billAdd_"+safeId(a.id);add.addEventListener("click",function(){var nb=startsNow({id:uid("b"),name:"New bill",amount:0,account:a.id,months:[]});cfg.bills.push(nb);openBill=nb.id;cfgNow();keepScroll(renderBillsList);reveal($("bill_"+safeId(nb.id)));var f=$("bn_"+nb.id);if(f){f.focus();f.select()}});box.appendChild(add);
+      // 2.14: a rough figure for the rest of an account's bills can be added here too (not on a closed account, or where 5.9 says no).
+      if(!a.closedFrom&&!estimateParts(cfg,a.id).has&&figEdit!==a.id&&!estimateBlock(cfg,a.id)){var nf=el("button","linkbtn small figadd","Not sure you've got them all? Add a rough figure");nf.type="button";nf.id="bf_"+safeId(a.id)+"_new";
+        nf.setAttribute("aria-label","Not sure you've got all of "+possessive(a.name||"this account")+" bills? Add a rough figure for the rest");
+        nf.addEventListener("click",function(){figEdit=a.id;figMsg=null;refreshFig(a.id);nf.hidden=true;focusOn("#bf_"+safeId(a.id)+"_amt")});box.appendChild(nf)}}});
   var orphans=cfg.bills.filter(function(b){return !accById(cfg,b.account)&&billMatches(b,q)});
   if(orphans.length){box.appendChild(el("div","accthead","Not linked to an account"));orphans.forEach(function(b){shown++;box.appendChild(billEditor(b))})}
   if(narrowed&&!shown)box.appendChild(el("div","empty",q?"No bills match “"+billQuery.trim()+"”"+(billFilter?" among the bills that aren't monthly.":"."):"Every bill is paid monthly."));
@@ -1210,10 +1627,16 @@ function billEditor(b){
   function refreshCat(){catSel.value=b.category||"";catHint.textContent=b.categoryAuto?"Suggested from the name. Change it if it's wrong.":"";hw.textContent=billWhen(b);
     var ls=$("bl_"+b.id);if(ls&&b.lead==null&&!validDate(b.renews))ls.value=String(defaultLead(b))}
   g.appendChild(labeled("Name",textIn(b.name,function(v){b.name=v;hn.textContent=v;applyCategorySuggestion(b);refreshCat();queueCfg()},"bn_"+b.id)));
-  g.appendChild(labeled("Amount each payment (£)",textIn(money2(b.amount),function(v){var r=parseMoney(v,false);if(r.invalid)return;b.amount=r.value||0;hv.textContent=fmt(b.amount);cost.textContent=costText(b);edited();queueCfg()},"ba_"+b.id,true)));ed.appendChild(g);
+  var amtIn=textIn(money2(b.amount),function(v){var r=parseMoney(v,false);if(r.invalid)return;b.amount=r.value||0;hv.textContent=fmt(b.amount);cost.textContent=costText(b);edited();queueCfg();refreshFig(b.account)},"ba_"+b.id,true);
+  // 2.14: once the amount is in, a bill inside a rough figure that went up says the transfer doesn't change, and listed bills
+  // that have just gone past the figure ask "Is that all of them?" (figAfter).
+  var amt0=null;amtIn.addEventListener("focus",function(){amt0={amount:num(b.amount),snap:figSnap()}});
+  amtIn.addEventListener("change",function(){var a0=amt0;amt0=null;if(!a0||Math.abs(num(b.amount)-a0.amount)<0.005)return;clearTimeout(cfgT);cfgT=null;if(!figSave())return;
+    if(figAfter(a0.snap))return;var t=figRise(b,a0.amount,a0.snap);if(t)toast(t)});
+  g.appendChild(labeled("Amount each payment (£)",amtIn));ed.appendChild(g);
   ed.appendChild(cost);note=datedNote("bills",b,"bd_"+b.id,rerenderBill,"ba_"+b.id);ed.appendChild(note);
   var g2=el("div","grid2");
-  g2.appendChild(labeled("Paid from",selectIn(accountOptions(cfg),b.account,function(v){b.account=v;edited();cfgNow();keepScroll(renderBillsList);reveal($("bill_"+sid))},"bs_"+b.id)));
+  g2.appendChild(labeled("Paid from",selectIn(accountOptions(cfg),b.account,function(v){var snap=figSnap();b.account=v;edited();cfgNow();figAfter(snap);keepScroll(renderBillsList);reveal($("bill_"+sid))},"bs_"+b.id)));
   catSel=selectIn([["","Not categorised"]].concat(CATEGORIES),b.category||"",function(v){setCategory(b,v,thisMonth());refreshCat();cfgNow();var sv=$("bsv_"+b.id);if(sv)sv.checked=!!b.savings},"bcat_"+b.id);
   g2.appendChild(labeled("Category",catSel));ed.appendChild(g2);
   catHint=el("div","small muted");catHint.id="bch_"+b.id;ed.appendChild(catHint);
@@ -1230,11 +1653,14 @@ function billEditor(b){
   var mw=el("div");mw.appendChild(el("span","lbl","Months it's paid"));var mg=el("div","months");
   for(var mi=1;mi<=12;mi++){(function(mm){var on=b.months.length>0&&b.months.length<12&&b.months.indexOf(mm)>=0;var bt=el("button","mbtn",MS[mm-1]);bt.setAttribute("aria-pressed",on||!b.months.length||b.months.length>=12?"true":"false");bt.setAttribute("aria-label",MN[mm-1]);
     bt.addEventListener("click",function(){var cm=(!b.months.length||b.months.length>=12)?[1,2,3,4,5,6,7,8,9,10,11,12]:b.months.slice();var ix=cm.indexOf(mm);if(ix>=0)cm.splice(ix,1);else cm.push(mm);
-      if(!cm.length){toast("A bill needs at least one month");return}b.months=cm.length>=12?[]:cm.sort(function(x,y){return x-y});edited();cfgNow();keepScroll(renderBillsList)});mg.appendChild(bt)})(mi)}
-  mw.appendChild(mg);var ev=el("button","linkbtn","Every month");ev.addEventListener("click",function(){b.months=[];edited();cfgNow();keepScroll(renderBillsList)});mw.appendChild(ev);ed.appendChild(mw);
+      if(!cm.length){toast("A bill needs at least one month");return}var snap=figSnap();b.months=cm.length>=12?[]:cm.sort(function(x,y){return x-y});edited();cfgNow();figAfter(snap);keepScroll(renderBillsList)});mg.appendChild(bt)})(mi)}
+  mw.appendChild(mg);var ev=el("button","linkbtn","Every month");ev.addEventListener("click",function(){var snap=figSnap();b.months=[];edited();cfgNow();figAfter(snap);keepScroll(renderBillsList)});mw.appendChild(ev);ed.appendChild(mw);
   ed.appendChild(checkIn("This is savings, not a bill (for example, a Junior ISA)",b.savings,function(v){setSavingsFlag(b,v,thisMonth());refreshCat();cfgNow()},"bsv_"+b.id));
   var br=el("div","btnrow");br.appendChild(confirmBtn("bill"+b.id,"Delete bill",function(){openBill=null;var to=nextFocus(wrap,".bill","#billList",function(n){return "#"+n.id+" > button"},"#billAdd_"+safeId(b.account));
-    removeItem("bills",b,(b.name||"Bill")+" deleted",function(){saveCfg(true);afterCfgChange();updateBadge();rerender()},"#bill_"+sid+" > button");focusOn(to)}));ed.appendChild(br);
+    // 2.14: deleting a bill inside a rough figure puts it back into "not listed yet": offer to lower the figure too (5.7).
+    var offer=estimateDeleteOffer(cfg,b);if(offer){figOffer={account:offer.account,amount:offer.amount,figure:offer.figure,name:b.name||"Bill",bill:b.id};figAsk=null;figMsg=null}
+    removeItem("bills",b,(b.name||"Bill")+" deleted",function(){if(figOffer&&cfg.bills.some(function(x){return x.id===b.id}))figOffer=null;saveCfg(true);afterCfgChange();updateBadge();rerender()},"#bill_"+sid+" > button");focusOn(to);
+    if(offer&&figOffer)figSay("Lower "+possessive(accName(offer.account))+" figure by "+fmt(offer.amount)+" too? Lower it or Keep it, under "+accName(offer.account)+".")}));ed.appendChild(br);
   wrap.appendChild(ed);refreshCat();return wrap;
 }
 /* Quick add: a compact table for entering several bills at once (Settings › Bills). */
@@ -1247,18 +1673,19 @@ function readQuickRows(rows,ids){rows.forEach(function(r){if(ids&&ids.indexOf(r.
 /* One row of a quick list: name and amount, then as asked the account (o.acct: [[id, name]…]), how often a bill is paid
    (o.freq, setup only) and Remove. Shared by Settings › Bills › Quick add and setup's bills, budgets and savings.
    o: {id(field) → the element id, noun and n ("Bill", 1) for labels, group (a label for the whole row), namePh,
-   acctLabel, acctShown (a visible label instead of aria-label), onEnter, onRemove, onFreq, onName (as the name is typed)}. */
+   acctLabel, acctShown (a visible label instead of aria-label), onEnter, onRemove (no Remove button without it), onFreq,
+   onName and onAmount (as they're typed)}. */
 var FREQS=[["monthly","Every month"],["yearly","Once a year"],["some","Some months"]];
 function quickRow(r,o){var row=el("div","qa-row"),N=o.noun+" "+o.n;
   if(o.group){row.setAttribute("role","group");row.setAttribute("aria-label",o.group)}
   var n=el("input","inp");n.id=o.id("n");n.value=r.name;n.placeholder=o.namePh||o.noun+" name";n.autocomplete="off";n.setAttribute("aria-label",N+" name");n.addEventListener("input",function(){r.name=n.value;if(o.onName)o.onName()});
   var mb=el("input","inp num");mb.id=o.id("a");mb.value=r.amount;mb.placeholder="£";mb.inputMode="decimal";mb.autocomplete="off";mb.setAttribute("aria-label",N+" amount in pounds");mb.setAttribute("enterkeyhint","next");
-  mb.addEventListener("input",function(){r.amount=mb.value});mb.addEventListener("keydown",function(e){if(e.key==="Enter"){e.preventDefault();o.onEnter()}});
+  mb.addEventListener("input",function(){r.amount=mb.value;if(o.onAmount)o.onAmount()});mb.addEventListener("keydown",function(e){if(e.key==="Enter"){e.preventDefault();o.onEnter()}});
   row.appendChild(n);row.appendChild(mb);
   if(o.acct){var sel=selectIn(o.acct,r.account,function(v){r.account=v;if(o.onAcct)o.onAcct(v)},o.id("s"));
-    if(o.acctShown)row.appendChild(labeled(o.acctLabel,sel));else{sel.setAttribute("aria-label",N+" "+o.acctLabel.toLowerCase());row.appendChild(sel)}}
+    if(o.acctShown){var al=labeled(o.acctLabel,sel);if(o.freq)al.className="qa-full";row.appendChild(al)}else{sel.setAttribute("aria-label",N+" "+o.acctLabel.toLowerCase());row.appendChild(sel)}}
   if(o.freq)row.appendChild(labeled("How often",selectIn(FREQS,r.freq||"monthly",function(v){r.freq=v;o.onFreq()},o.id("f"))));
-  var x=el("button","btn ghost","Remove");x.setAttribute("aria-label","Remove "+N.toLowerCase());x.addEventListener("click",o.onRemove);row.appendChild(x);
+  if(o.onRemove){var x=el("button","btn ghost","Remove");x.setAttribute("aria-label","Remove "+N.toLowerCase());x.addEventListener("click",o.onRemove);row.appendChild(x)}
   if(o.freq&&r.freq==="yearly"){var mo=[["","Choose a month"]].concat(MN.map(function(m,i){return [String(i+1),m]}));
     var mf=labeled("Paid in",selectIn(mo,r.month!=null?String(r.month):"",function(v){r.month=v},o.id("m")));mf.className="qa-full";row.appendChild(mf)}
   if(o.freq&&r.freq==="some"){var mw=el("div","qa-full"),gid=o.id("m");mw.setAttribute("role","group");mw.setAttribute("aria-labelledby",gid+"_l");mw.id=gid;
@@ -1288,6 +1715,69 @@ function quickAddBox(rows,acctOpts,idp,o){
     if(!res.bills.length&&!o.allowEmpty){msg.className="hint err";msg.textContent="Type at least one bill first.";return}
     o.onAdd(res.bills)});br.appendChild(go)}
   box.appendChild(br);return box}
+/* ---------- Paste a list (2.14, docs/onboarding.md 5.4) ----------
+   A plain text box: the list is pasted in (so no clipboard permission), read by parseBillLines (calc.js), and what it found
+   shows as bill rows to check before adding, as Quick add's rows do: one that matches a bill already there is unticked,
+   a large amount is flagged, a yearly bill with no month asks for it, and an account named in the list is matched to the
+   household's (one it doesn't know falls back to the default and is flagged). Lines it couldn't read are shown as they
+   were pasted. Used by setup's bills step and Settings › Bills. st: {text, res, rows}, kept while the box is open. o: {idp,
+   card (a card of its own, else a box), heading, accts [[id, name]…], def (the account for bills without one), existing
+   [{name, amount}] (for duplicates), redraw(focusId), onClose, onAdd(list of {name, amount, account, months, freq, month,
+   picked})}. */
+var PASTE_WHY={"two amounts":"two amounts, so it isn't clear which is the bill","no amount":"no amount","no name":"no name","couldn't read":"couldn't be read"};
+/* The household's account a pasted account name means: the same name (ignoring "account", "'s" and punctuation), or the one
+   account whose name contains it or is contained in it. null when there's no such account, or more than one. */
+function pasteMatch(text,accts){var n=function(x){return String(x||"").toLowerCase().replace(/['’]s\b/g,"").replace(/\baccount\b/g," ").replace(/[^a-z0-9]+/g," ").trim()},t=n(text);if(!t)return null;
+  var ex=accts.filter(function(a){return n(a[1])===t});if(ex.length===1)return ex[0][0];
+  var part=accts.filter(function(a){var m=n(a[1]);return m&&(m.indexOf(t)>=0||t.indexOf(m)>=0)});return part.length===1?part[0][0]:null}
+/* What parseBillLines found, as rows to check: how often from its months (a yearly bill with no month, or a quarterly one
+   with none, asks: ask), ticked unless it's a duplicate. */
+function pasteRows(res,accts,def){return res.items.map(function(it){var acct=it.account?pasteMatch(it.account,accts):null,m=arr(it.months);
+  var r={name:it.name,amount:Number(it.amount).toFixed(2),account:acct||def,on:!it.duplicate,freq:"monthly",month:"",picked:[],dup:!!it.duplicate,large:!!it.large,other:it.account&&!acct?String(it.account):null};
+  if(it.yearly){r.freq="yearly";r.ask=true}else if(m.length===1){r.freq="yearly";r.month=String(m[0])}else if(m.length>1&&m.length<12){r.freq="some";r.picked=m.slice()}else if(it.quarterly){r.freq="some";r.ask=true}
+  return r})}
+/* "Found 18 bills, £1,642.30 a month. 2 lines need a look." (a bill once a year counts as a twelfth; a line needs a look when
+   it couldn't be read, or its bill is large, has no month yet or names an account Dovetail doesn't know). */
+function pasteSummary(st){var items=st.res.items,mo=items.reduce(function(t,it){var m=arr(it.months).length;return t+it.amount*(it.yearly?1:it.quarterly&&!m?4:m||12)/12},0);
+  var look=st.res.unread.length+st.rows.filter(function(r){return r.large||r.ask||r.other}).length;
+  return (items.length?"Found "+plural(items.length,"bill")+", "+fmt(mo)+" a month.":"No bills found.")+(look?" "+plural(look,"line")+(look===1?" needs":" need")+" a look.":"")}
+function pasteBox(st,o){var box=el(o.card?"section":"div",o.card?"card su-paste":"box su-paste"),hid=o.idp+"_h",h=el(o.heading||"h3",null,"Paste a list");box.id=o.idp;h.id=hid;
+  if(!o.card)box.setAttribute("role","group");box.setAttribute("aria-labelledby",hid);box.appendChild(h);
+  var ip=el("p","small muted","Copy your bills from a spreadsheet or a note and paste them here, one bill per line, like “Streaming £8.75” or “Council Tax, 168, Joint”. Add “yearly” or a month to a bill that doesn't come every month.");ip.id=o.idp+"_i";box.appendChild(ip);
+  var ta=el("textarea","inp");ta.id=o.idp+"_text";ta.value=st.text||"";ta.rows=5;ta.spellcheck=false;ta.setAttribute("autocomplete","off");ta.setAttribute("aria-describedby",ip.id);ta.addEventListener("input",function(){st.text=ta.value});
+  box.appendChild(labeled("Your list",ta));
+  var msg=el("div","hint");msg.id=o.idp+"_msg";msg.setAttribute("aria-live","polite");
+  var br=el("div","btnrow"),rd=el("button","btn"+(st.res?" ghost":""),st.res?"Read it again":"Read the list");rd.type="button";rd.id=o.idp+"_read";
+  rd.addEventListener("click",function(){if(!String(st.text||"").trim()){msg.className="hint err";msg.textContent="Paste your list into the box first.";ta.focus();return}
+    st.res=parseBillLines(st.text,o.existing);st.rows=pasteRows(st.res,o.accts,o.def);o.redraw(o.idp+"_sum")});
+  var cl=el("button","btn ghost","Cancel");cl.type="button";cl.id=o.idp+"_close";cl.addEventListener("click",o.onClose);br.appendChild(rd);br.appendChild(cl);box.appendChild(br);
+  if(!st.res){box.appendChild(msg);return box}
+  var sp=el("p","su-pastesum",pasteSummary(st));sp.id=o.idp+"_sum";sp.tabIndex=-1;box.appendChild(sp);
+  var nm=function(id){var a=o.accts.filter(function(x){return x[0]===id})[0];return a?a[1]:""};
+  if(st.rows.length){var hdr=el("div","qa-head");hdr.setAttribute("aria-hidden","true");hdr.appendChild(el("span",null,"Bill name"));hdr.appendChild(el("span",null,"Amount (£)"));box.appendChild(hdr);
+    var list=el("div","qa-rows");st.rows.forEach(function(r,i){var id=function(f){return o.idp+"_"+i+"_"+f};
+      var row=quickRow(r,{id:id,noun:"Bill",n:i+1,group:"Bill "+(i+1)+" of "+st.rows.length,freq:true,acct:o.accts.length>1?o.accts:null,acctLabel:"Paid from",acctShown:true,
+        onFreq:function(){o.redraw(id("f"))},onEnter:function(){var nx=$(id("f"));if(nx)nx.focus()}});
+      var ck=checkIn("Add this bill",r.on,function(v){r.on=v},id("on"));ck.classList.add("qa-full");row.insertBefore(ck,row.firstChild);
+      var why=[];if(r.dup)why.push("Already in your bills, so it isn't ticked.");if(r.large)why.push("A large amount: check it's a bill, not a balance.");
+      if(r.other)why.push("“"+r.other+"” isn't one of your accounts, so it's paid from "+nm(r.account)+" for now.");
+      if(r.ask)why.push(r.freq==="yearly"?"Once a year: choose the month.":"Every quarter: pick its months.");
+      if(why.length){var nt=el("p","small qa-full su-pastewhy",why.join(" "));nt.id=id("why");row.appendChild(nt);ck.querySelector("input").setAttribute("aria-describedby",nt.id)}
+      list.appendChild(row)});box.appendChild(list)}
+  if(st.res.unread.length){var uh=el("p","small su-unreadh","Lines that couldn't be read, as you pasted them:");uh.id=o.idp+"_uh";box.appendChild(uh);var ul=el("ul","small su-unread");ul.setAttribute("aria-labelledby",uh.id);
+    st.res.unread.forEach(function(u){var li=el("li");li.appendChild(el("span","su-raw",u.text));li.appendChild(document.createTextNode(" (line "+u.line+": "+(PASTE_WHY[u.reason]||u.reason)+")"));ul.appendChild(li)});box.appendChild(ul)}
+  if(st.res.truncated)box.appendChild(el("p","small muted","That's a long list: only the start of it was read."));
+  box.appendChild(msg);
+  if(st.rows.length){var ar=el("div","btnrow"),ad=el("button","btn","Add the ticked bills");ad.type="button";ad.id=o.idp+"_add";
+    ad.addEventListener("click",function(){var on=st.rows.filter(function(r){return r.on}),res=readRows(on);
+      box.querySelectorAll(".bad").forEach(function(e){e.classList.remove("bad");e.removeAttribute("aria-invalid")});
+      if(!on.length){msg.className="hint err";msg.textContent="Tick at least one bill to add.";return}
+      if(res.errors.length){res.errors.forEach(function(e,j){var e2=$(o.idp+"_"+st.rows.indexOf(on[e.i])+"_"+(e.f==="name"?"n":e.f==="amount"?"a":"m"));if(e2){e2.classList.add("bad");e2.setAttribute("aria-invalid","true");if(!j){var f=e2.matches("input,select")?e2:e2.querySelector("button");if(f)f.focus()}}});
+        msg.className="hint err";msg.textContent="Each ticked bill needs a name and an amount like 42.50, and its month or months if it doesn't come every month.";return}
+      var ids=o.accts.map(function(a){return a[0]});
+      o.onAdd(res.items.map(function(x){return {name:x.name,amount:x.amount,account:ids.indexOf(x.r.account)>=0?x.r.account:o.def,months:x.months,freq:x.r.freq,month:x.r.month,picked:x.r.picked}}))});
+    ar.appendChild(ad);box.appendChild(ar)}
+  return box}
 /* simple lists: other income, spending budgets, savings transfers */
 function listSet(o){
   var box=clear($(o.box));box.appendChild(el("div","small muted",o.intro));
@@ -1434,8 +1924,10 @@ function keepCurrent(){if(!backupsAllowed())return true;clearTimeout(nbT);nbT=nu
   return nativeCall(function(){if(typeof NATIVE.keepBackup==="function")return NATIVE.keepBackup(backupText())===true;NATIVE.saveBackup(backupText());return true},false)}
 /* The settings, months and Wealth data exactly as they are stored (not as normCfg left them), as a kept backup: on the
    first open of a new version, before anything is written over them. sc: the stored settings, read. */
-function keepRaw(sc){if(!backupsAllowed())return true;var w=wealthRaw!=null?rawGet(K_W):null,v=backupVersionFor(sc);
-  var t='{"app":"payday-transfers","version":'+v+(v>5?',"needs":'+JSON.stringify(BACKUP_NEEDS):"")+',"savedAt":'+JSON.stringify(new Date().toISOString())+
+function keepRaw(sc){if(!backupsAllowed())return true;var w=wealthRaw!=null?rawGet(K_W):null,ms={};try{ms=JSON.parse(rawGet(K_MON)||"{}")}catch(e){ms={}}
+  // 2.17 (13.2, L14): the months too, since a one-off that uses an earlier month's extra payday needs 2.17.
+  var v=backupVersionFor(sc,ms);
+  var t='{"app":"payday-transfers","version":'+v+(v>5?',"needs":'+JSON.stringify(backupNeedsFor(sc,ms)):"")+',"savedAt":'+JSON.stringify(new Date().toISOString())+
     ',"config":'+rawGet(K_CFG)+',"months":'+(rawGet(K_MON)||"{}")+(w?',"wealth":'+w:"")+"}";
   return nativeCall(function(){if(typeof NATIVE.keepBackup==="function")return NATIVE.keepBackup(t)===true;NATIVE.saveBackup(t);return true},false)}
 function restoreError(r){return String(r).indexOf("needs:")===0?"This file needs Dovetail "+String(r).slice(6)+" or later. Update the app first.":r==="newer"?"This backup was made by a newer version of Dovetail. Update the app first.":r==="empty"?"This backup has no accounts in it.":r==="bad"?"That backup couldn't be opened, so nothing was changed.":"Couldn't save the backup on this phone."}
@@ -1498,7 +1990,8 @@ function renderRestoreOffer(target){
   else c.appendChild(el("div",null,"Found an automatic backup from "+backupWhen(restoreOffer)+". Restore your bills, months and settings from it?"));
   var r=el("div","btnrow"),y=el("button","btn","Restore backup"),n=el("button","btn ghost","Start fresh");
   y.addEventListener("click",function(){restoreNative(restoreOffer.name)});
-  n.addEventListener("click",function(){restoreOffer=null;rerender();toast("Starting fresh. Your old backups are still in Settings")});
+  // In setup the redraw removes the focused button (and brings the welcome's picture back): focus goes to the title.
+  n.addEventListener("click",function(){restoreOffer=null;rerender();toast("Starting fresh. Your old backups are still in Settings");var h=target&&$("suTitle");if(h)try{h.focus()}catch(e){}});
   r.appendChild(y);r.appendChild(n);c.appendChild(r);box.appendChild(c)}
 /* ---------- opening a backup file (shared from another phone, or picked with "Import a backup file…") ----------
    The file's content is checked first, then the same confirmation as restoring a pasted backup is shown, with a summary
@@ -1545,7 +2038,9 @@ function importOfferCard(){var up=importOffer.update,replaces=cfg.setupDone&&!cf
   y.addEventListener("click",function(){var d=importOffer.data;savePending();
     if(!keepCurrent()){toast("Couldn't save a backup, so nothing was changed.");return}restoreOffer=null;var res=applyBackup(d,true);
     if(res!==true){importOffer.msg=restoreError(res);rerender();return}importOffer=null;afterRestore(restoredText(up?"Updated":"Backup restored"));goTab("pay");queueNativeBackup();if(up)focusPayH()});
-  var n=el("button","btn ghost","Cancel");n.id="importNo";n.addEventListener("click",function(){importOffer=null;rerender();toast("Nothing was changed");if(up)focusPayH()});
+  var n=el("button","btn ghost","Cancel");n.id="importNo";n.addEventListener("click",function(){importOffer=null;rerender();toast("Nothing was changed");if(up)focusPayH();
+    // 2.18: in setup the redraw removes the focused button (and brings the welcome's picture back): focus goes to the title.
+    else{var h=$("tab-setup")&&!$("tab-setup").hidden&&$("suTitle");if(h)try{h.focus()}catch(e){}}});
   r.appendChild(y);r.appendChild(n);c.appendChild(r);if(importOffer.msg){var em=el("div","hint err",importOffer.msg);em.setAttribute("role","alert");c.appendChild(em)}return c}
 /* Browsers (and testing): the same import through a file input. In the app the system file picker is used. */
 function pickFileInBrowser(){var i=el("input");i.type="file";i.accept=".json,application/json,text/plain";i.style.display="none";document.body.appendChild(i);
@@ -1572,11 +2067,19 @@ function doRestore(){
    other, which keeps whatever has been entered and fills in the rest (finishSetup). The Pay tab then shows a "Finish
    setting up" card for what's still missing. Back keeps everything typed; "Skip this step" (payday, bills, spending and
    saving) moves on and leaves that step out, until Next is pressed on it again. */
+/* Step numbers (2.18, docs/welcome.md 5.5): code, tests and the simulation keep the internal numbers 1–7 (s.step, goStep,
+   walkSetup(p, n), check names such as "setup step 4", the sim:ui reports). The welcome (step 1) is a doorway with no
+   counter, so what people read counts six steps from pay: "Step 1 of 6" is s.step 2. Anything a user reads uses the
+   displayed number (s.step - 1) or the step's name. */
 var setup=null,SETUP_STEPS=7;
-var SETUP_TITLES=["Welcome to Dovetail","Your pay","Your payday","Your accounts","Your bills","Spending and saving","Your first payday"];
+var SETUP_TITLES=["Payday, without the guesswork","Your pay","Your payday","Your accounts","Your bills","Spending and saving","Your first payday"];
 function startSetup(){setup={step:1,people:[{id:uid("p"),name:"",pay:"",payAccount:null}],income:[],sameDay:null,payday:{day:"",weekend:true},skip:{},
   shape:null,style:null,pool:null,ans:{fun:null,funAmt:{},rule:null,set:{},two:"no",payer:null,gets:{},getsAmt:{},board:{},boardAmt:{}},applied:null,
-  pending:null,edited:false,accounts:[],bills:{},billOpen:{},budgets:[],savings:[],payWarned:false,bad:[],msg:"",note:false,focusBad:false}}
+  pending:null,edited:false,accounts:[],bills:{},billOpen:{},budgets:[],savings:[],payWarned:false,bad:[],msg:"",note:false,focusBad:false,
+  // 2.14: rough figures for accounts' bills (as typed, by account), which figure boxes are open, what's moved in now (the
+  // check, never saved) and whether its question was answered, accounts with "No bills from here", the open group of
+  // suggestions in each section, the paste box ({text, res, rows} while open) and the bills help.
+  figures:{},figOpen:{},figIn:{},figAsked:{},noBills:{},chipGrp:{},paste:null,findOpen:false}}
 /* The words for the four starting points in the accounts step, for one person and for more. */
 var SHAPE_TEXT={
   one:{joint:["My account","Pay goes into one account. Bills and spending come out of it."],
@@ -1587,10 +2090,21 @@ var SHAPE_TEXT={
     own:["Our own accounts, then a joint one","Pay goes into your own accounts. What's left after your own bills moves to a joint account."],
     split:["Separate accounts for bills and spending","Pay goes into your own accounts, then to a joint bills account. What's left after the bills moves to a joint spending account."],
     other:["Something else","Start with one account and build it yourself."]}};
-/* Suggestions in the bills and spending steps (tap one to fill in a row). Council Tax is usually paid April to January;
-   a TV Licence and car insurance once a year. */
-var BILL_SUGGESTIONS=[["Rent"],["Mortgage"],["Council Tax",{freq:"some",picked:[4,5,6,7,8,9,10,11,12,1]}],["Energy"],["Water"],["Broadband"],["Mobile phone"],
-  ["TV Licence",{freq:"yearly"}],["Car insurance",{freq:"yearly"}],["Home insurance"],["Streaming"],["Gym"]];
+/* Suggestions in the bills and spending steps (tap one to fill in a row). 2.14 (docs/onboarding.md 5.5): about 25 common
+   bills in groups (g), each with its usual frequency. top: shown straight away in a bills account's section (rent or
+   mortgage counts as one of the six most common); own: the few shown first in someone's own account (5.10); the rest open
+   a group at a time with one tap. Council Tax is usually paid April to January; a TV Licence and car insurance once a year. */
+var BILL_GROUPS=[["home","Home"],["phones","Phones"],["transport","Transport"],["children","Children"],["debt","Debt"],["subs","Subscriptions"],["insurance","Insurance"]];
+var BILL_SUGGESTIONS=[["Rent",{g:"home",top:1}],["Mortgage",{g:"home",top:1}],["Council Tax",{g:"home",top:1,freq:"some",picked:[4,5,6,7,8,9,10,11,12,1]}],["Energy",{g:"home",top:1}],
+  ["Water",{g:"home",top:1}],["Broadband",{g:"home",top:1}],["TV Licence",{g:"home",top:1,freq:"yearly"}],["Home insurance",{g:"home"}],["Boiler cover",{g:"home"}],
+  ["Mobile phone",{g:"phones",own:1}],["Landline",{g:"phones"}],
+  ["Car finance",{g:"transport",own:1}],["Car insurance",{g:"transport",own:1,freq:"yearly"}],["Vehicle tax",{g:"transport"}],["Breakdown cover",{g:"transport",freq:"yearly"}],
+  ["Childcare",{g:"children"}],["School meals",{g:"children"}],["Loan",{g:"debt"}],["Credit card",{g:"debt"}],
+  ["Streaming",{g:"subs"}],["Music",{g:"subs"}],["Gym",{g:"subs",own:1}],["Membership",{g:"subs"}],["Life insurance",{g:"insurance"}],["Pet insurance",{g:"insurance"}]];
+/* 2.14 (5.3): the card at the end of the bills step, for bills that don't come every month: [chip, the bill's name, its
+   frequency]. Council Tax isn't here: the rough figure counts it as monthly. */
+var NM_SUGGESTIONS=[["Car insurance","Car insurance","yearly"],["TV Licence","TV Licence","yearly"],["Home insurance","Home insurance","yearly"],["Breakdown cover","Breakdown cover","yearly"],
+  ["Boiler cover","Boiler cover","yearly"],["Yearly subscriptions","Yearly subscription","yearly"],["Service charge","Service charge","some"],["Water (if quarterly)","Water","some"]];
 var BUDGET_SUGGESTIONS=["Food shopping","Fuel","Travel","Going out","Clothes","Gifts","Pets","Children"];
 var SAVINGS_SUGGESTIONS=["Emergency fund","Holiday","Christmas","Car","House deposit"];
 var DAY_NAMES=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"],NUMBER_WORDS=["no","one","two","three","four","five","six","seven","eight","nine"];
@@ -1701,7 +2215,9 @@ function setupNav(box,o){var s=setup;
    ones left out close from that month and new ones open then. Saved with applyChange (calc.js); Undo puts everything
    back as it was. Pay for the questions is each person's latest pay (typed, or usual). */
 function startChange(){startSetup();var s=setup,roles=accountRoles(cfg);s.change=true;s.step=4;s.from=null;s.moves={};
-  s.people=cfg.people.map(function(p,i){var e=payEstimate(cfg,months,p.id,monthKey).v;return {id:p.id,name:personName(p,i),pay:e>0?String(e):"",payAccount:p.payAccount}});
+  // 2.16: the pay a month plans on with nothing typed (planPay: the estimate, pay each time × n on a pattern).
+  // Someone on a pattern counts with their pay over a year ÷ 12 (usualMonthly), as their shares go by.
+  var est=payEstimates();s.people=cfg.people.map(function(p,i){var pa=personAt(cfg,p.id,monthKey),e=patternOf(pa)?usualMonthly(pa):est[p.id].used;return {id:p.id,name:personName(p,i),pay:e>0?String(e):"",payAccount:p.payAccount}});
   s.income=cfg.income.map(function(x){return {id:x.id,name:String(x.name||""),amount:String(x.amount),account:x.account,picked:true}});
   s.accounts=cfg.accounts.filter(function(a){return !a.closedFrom}).map(function(a){var x={id:a.id,name:a.name||"",colour:a.colour,leftoverTo:parentId(cfg,a.id),role:roles[a.id]};if(a.funding)x.funding=clone(a.funding);return x});
   // 2.13: the household's own accounts, to match every answer against (applyShape); "separate joint accounts?" starts on
@@ -1714,7 +2230,7 @@ function cancelChange(){setup=null;keepScroll(renderAccountsSet);var b=$("ac_cha
 function changeMonths(){var k0=defaultMonth(payCfg()),out=[];for(var o=-3;o<=12;o++)out.push(shiftMonth(k0,o));return out}
 /* Accounts the change leaves out that still have bills, budgets, savings or income: they need somewhere to go. */
 function closingAccounts(){var s=setup,keep={};s.accounts.forEach(function(a){keep[a.id]=1});
-  return cfg.accounts.filter(function(a){return !a.closedFrom&&!keep[a.id]}).map(function(a){var n=itemsOn(a.id);return {a:a,n:n,busy:!!(n.bills||n.budgets||n.savings||n.income)}})}
+  return cfg.accounts.filter(function(a){return !a.closedFrom&&!keep[a.id]}).map(function(a){var n=itemsOn(a.id);return {a:a,n:n,busy:!!(n.bills||n.budgets||n.savings||n.income||n.estimates)}})}
 function suChangeWhen(box,s){var opts=changeMonths(),def=shiftMonth(defaultMonth(payCfg()),1);if(!s.from)s.from=def;
   var c=suCard(box,"ch_h_when","Starting from");
   c.appendChild(labeled("The first pay month it applies to",selectIn(opts.map(function(k){return [k,mLabel(k)]}),s.from,function(v){s.from=v;suRedraw("ch_from")},"ch_from")));
@@ -1730,7 +2246,7 @@ function suChangeWhen(box,s){var opts=changeMonths(),def=shiftMonth(defaultMonth
   if(closing.length){var cc=suCard(box,"ch_h_close","Accounts that close");
     closing.forEach(function(x,i){var nm=x.a.name||"Unnamed account";if(!x.busy){cc.appendChild(el("p","small",nm+" closes from "+mLabel(s.from)+". Nothing uses it."));return}
       if(!s.moves[x.a.id]||!accById(sc,s.moves[x.a.id]))s.moves[x.a.id]=def2;
-      cc.appendChild(labeled(nm+" closes. Move its bills, budgets and savings to",selectIn(to,s.moves[x.a.id],function(v){s.moves[x.a.id]=v},"ch_mv_"+i)))});
+      cc.appendChild(labeled(nm+" closes. Move its bills, budgets"+(x.n.estimates?", savings and rough figure":" and savings")+" to",selectIn(to,s.moves[x.a.id],function(v){s.moves[x.a.id]=v},"ch_mv_"+i)))});
     if(closing.some(function(x){return x.busy}))cc.appendChild(el("p","small muted","Months before "+mLabel(s.from)+" keep them where they were."))}
   var nw=s.accounts.filter(function(a){return !accById(cfg,a.id)}).map(suAcctName);
   var dc=suCard(box,"ch_h_dia","From "+mLabel(s.from));if(nw.length)dc.appendChild(el("p","small",listAnd(nw)+(nw.length>1?" open":" opens")+" then."));
@@ -1746,9 +2262,9 @@ function confirmChange(){var s=setup;if(!s||!s.change)return;savePending();suSyn
   cfg=applyChange(cfg,from,next,moves,oneOffAccounts());
   // One-offs from that month on, in an account that closes, go where its bills went.
   Object.keys(months).forEach(function(k){if(k>=from)arr(months[k]&&months[k].oneOffs).forEach(function(o){if(o&&moves[o.account])o.account=moves[o.account]})});
-  cur=months[monthKey]?clone(months[monthKey]):null;setup=null;saveMonths();cfgNow();renderPayInputs();keepScroll(renderSettings);
+  cur=months[monthKey]?clone(months[monthKey]):null;xFresh();setup=null;saveMonths();cfgNow();renderPayInputs();keepScroll(renderSettings);
   var b=$("ac_change");if(b)try{b.focus({preventScroll:true})}catch(e){}
-  offerUndo("Changed from "+mLabel(from),function(){cfg=before.cfg;months=before.months;cur=months[monthKey]?clone(months[monthKey]):null;saveMonths();cfgNow();renderPayInputs();keepScroll(renderSettings)},"#ac_change")}
+  offerUndo("Changed from "+mLabel(from),function(){cfg=before.cfg;months=before.months;cur=months[monthKey]?clone(months[monthKey]):null;xFresh();saveMonths();cfgNow();renderPayInputs();keepScroll(renderSettings)},"#ac_change")}
 /* Accounts the saved months' one-offs use (they can't be removed while one does). */
 function oneOffAccounts(){var out=[];Object.keys(months).forEach(function(k){arr(months[k]&&months[k].oneOffs).forEach(function(o){if(o&&o.account&&out.indexOf(o.account)<0)out.push(o.account)})});
   arr(cur&&cur.oneOffs).forEach(function(o){if(o&&o.account&&out.indexOf(o.account)<0)out.push(o.account)});return out}
@@ -1771,19 +2287,32 @@ function renderSetup(){
   if(setup&&setup.change&&!$("chBox"))return;
   var box=clear($(suBoxId())),s=setup;if(!s){startSetup();s=setup}
   // Changing how the household manages its money (2.12): two steps, the questions and accounts, then when it starts.
-  var total=s.change?2:SETUP_STEPS,n=s.change?(s.step===8?2:1):s.step;
-  var head=el("div","pagehead su-head"),h1=el(s.change?"h3":"h1",null,s.change?(s.step===8?"When does the change start?":"Change how you manage your money"):SETUP_TITLES[s.step-1]);h1.id="suTitle";h1.tabIndex=-1;if(s.step===1)head.appendChild(markSvg("su-mark"));head.appendChild(h1);
-  var sn=el("div","su-stepn");sn.appendChild(el("span",null,"Step "+n+" of "+total));
-  var dots=el("div","steps-dots");dots.setAttribute("aria-hidden","true");for(var i=1;i<=total;i++)dots.appendChild(el("i",i<=n?"on":""));sn.appendChild(dots);head.appendChild(sn);box.appendChild(head);
+  // Setup's own steps count from pay (2.18): the welcome draws no counter, and pay is "Step 1 of 6".
+  var total=s.change?2:SETUP_STEPS-1,n=s.change?(s.step===8?2:1):s.step-1;
+  // 2.16: with anyone on a pattern, steps 3 and 7 are about the transfer day.
+  var title=suPats().length&&(s.step===3||s.step===7)?(s.step===3?"Your transfer day":"Your first transfer day"):SETUP_TITLES[s.step-1];
+  var head=el("div","pagehead su-head"),h1=el(s.change?"h3":"h1",null,s.change?(s.step===8?"When does the change start?":"Change how you manage your money"):title);h1.id="suTitle";h1.tabIndex=-1;
+  // The welcome (2.18): the mark and the name in a small line above a larger headline, and no step counter.
+  var wel=s.step===1&&!s.change;box.classList.toggle("su-wel",wel);
+  if(wel){var brand=el("div","su-brand");brand.appendChild(markSvg("su-mark"));brand.appendChild(el("span",null,"Dovetail"));head.appendChild(brand)}head.appendChild(h1);
+  if(!wel){var sn=el("div","su-stepn");sn.appendChild(el("span",null,"Step "+n+" of "+total));
+    var dots=el("div","steps-dots");dots.setAttribute("aria-hidden","true");for(var i=1;i<=total;i++)dots.appendChild(el("i",i<=n?"on":""));sn.appendChild(dots);head.appendChild(sn)}box.appendChild(head);
   (s.step===8?suChangeWhen:[suWelcome,suPay,suPayday,suAccounts,suBills,suSpend,suPreview][s.step-1])(box,s);
   s.bad.forEach(function(id,j){var e=$(id);if(!e)return;e.classList.add("bad");e.setAttribute("aria-invalid","true");e.setAttribute("aria-describedby","su_msg");
     if(!j&&s.focusBad){s.focusBad=false;var f=e.matches("input,select,textarea,button")?e:e.querySelector("button,input,select");try{f.focus()}catch(x){}reveal(e.closest(".qa-row,.box,.card")||e)}})}
 
-/* Step 1: welcome, with the three ways in. An automatic backup or an opened file is offered at the top. */
+/* Step 1: the welcome (2.18, docs/welcome.md): a headline, one line, a picture of a finished payday, a trust line and the
+   three ways in. An automatic backup or an opened file is offered straight under the headline, and then the picture is
+   left out so the card and the buttons come first. */
 function suWelcome(box,s){
+  var offer=!!(importOffer||restoreOffer);
   if(importOffer)box.appendChild(importOfferCard());
   var ro=el("div");ro.id="restoreOfferSetup";box.appendChild(ro);renderRestoreOffer(ro);
-  box.appendChild(el("p","su-lead","Dovetail works out the transfers to make between your accounts each payday, so every bill is covered and you can see what's left. Setting up takes about five minutes, and you can change anything later."));
+  box.appendChild(el("p","su-lead","Every bill, the account it leaves from, and the transfers to cover them, all in one place."));
+  if(!offer)box.appendChild(welcomePicture());
+  var tr=el("ul","su-trust");tr.id="su_trust";
+  [["bank","Any bank"],["nologin","No bank login"],["nonet","No internet"]].forEach(function(t){var li=el("li");li.appendChild(welcomeIcon(t[0]));li.appendChild(el("span",null,t[1]));tr.appendChild(li)});
+  box.appendChild(tr);
   var c=el("div","card su-choices");
   var go=el("button","btn","Set up my household");go.id="su_start";go.addEventListener("click",function(){goStep(2)});c.appendChild(go);
   var rd=el("details","su-restore");rd.id="su_restore";rd.appendChild(el("summary","btn ghost","Restore from a backup"));
@@ -1791,25 +2320,94 @@ function suWelcome(box,s){
   var ib=el("div","btnrow");ib.appendChild(importButton("Open a backup file","su_import"));ri.appendChild(ib);restoreBox(ri,"Or paste a backup");rd.appendChild(ri);
   if(restoreText||restoreMsg)rd.open=true;rd.addEventListener("toggle",function(){if(rd.open)reveal(rd)});c.appendChild(rd);
   var ex=el("button","btn ghost","Explore an example");ex.id="su_example";ex.addEventListener("click",loadExample);c.appendChild(ex);box.appendChild(c);
-  var lr=el("div","su-links"),later=el("button","linkbtn","Skip setup for now");later.id="su_later";later.addEventListener("click",finishLater);lr.appendChild(later);box.appendChild(lr)}
+  var lr=el("div","su-links"),later=el("button","linkbtn","Skip setup for now");later.id="su_later";later.addEventListener("click",finishLater);lr.appendChild(later);box.appendChild(lr);
+  var note=el("p","su-note","About five minutes to set up, and you can change anything later. A rough figure is fine for bills.");note.id="su_note";box.appendChild(note)}
+/* The welcome's picture: a made-up payday, round figures that add up (left over and the bill count are worked out here,
+   never typed). say/saysBills are the spoken forms for the screen-reader sentence. The names and amounts were checked
+   against tools/make-public.mjs's search (the owner's bill names and amounts): if any changes, run it again. */
+var WELCOME_EXAMPLE={pay:3000,from:{name:"Current account",colour:"blue"},transfers:[
+  {to:"Bills account",say:"the Bills account",colour:"purple",amount:1400,bills:["Rent","Council tax","Energy"],more:2,saysBills:"rent, council tax, energy and 2 more bills"},
+  {to:"Everyday account",say:"the Everyday account",colour:"orange",amount:800,bills:["Phone","Gym"],saysBills:"the phone and the gym"},
+  {to:"Savings",say:"Savings",colour:"teal",amount:300}]};
+/* The three trust-line icons and the tick (24- and 12-unit boxes; stroked by CSS). */
+var WELCOME_ICONS={bank:["M3.5 9.5 12 4.5l8.5 5M5 20h14M6.5 12v5.5M10.2 12v5.5M13.8 12v5.5M17.5 12v5.5"],
+  nologin:["M12 3.5 5 6v5.5c0 4.2 2.9 7.6 7 9 4.1-1.4 7-4.8 7-9V6z","m9 12 2.2 2.2L15.2 10"],
+  nonet:["M12 19.5h.01M8.6 16a5 5 0 0 1 6.8 0M5.2 12.6a10 10 0 0 1 5-2.5M18.8 12.6a10 10 0 0 0-2.4-1.8M2 9.2a15 15 0 0 1 4.5-2.8M22 9.2A15 15 0 0 0 11 5M3 3l18 18"]};
+function welcomeIcon(k){var v=svgEl("svg",{viewBox:"0 0 24 24","aria-hidden":"true",focusable:"false"});WELCOME_ICONS[k].forEach(function(d){svgEl("path",{d:d},v)});return v}
+function welcomeTick(){var v=svgEl("svg",{viewBox:"0 0 12 12","aria-hidden":"true",focusable:"false"});svgEl("path",{d:"M2.6 6.2 5 8.5l4.4-4.8"},v);return v}
+/* A badge for a made-up account: its first letter, in its colour. */
+function welcomeBadge(name,colour){var a=avatar(null,false,name.charAt(0));a.style.setProperty("--c",colourVar(colour));return a}
+/* The card borrows the Pay tab's look (numbered transfers, account badges, the hero's accent band). Words and amounts are
+   HTML so they grow with larger text; the drawing is hidden from screen readers, and one sentence before it says what
+   it shows. */
+function welcomePicture(){var W=WELCOME_EXAMPLE,left=W.pay,bills=0;
+  // Parts are joined by spaces (ignored by the flex layout) so the card's text reads as words.
+  var put=function(p){for(var i=1;i<arguments.length;i++){if(p.firstChild)p.appendChild(document.createTextNode(" "));p.appendChild(arguments[i])}return p};
+  W.transfers.forEach(function(t){left-=t.amount;bills+=t.bills?t.bills.length+(t.more||0):0});
+  var fig=el("figure","su-pic");fig.id="su_pic";
+  fig.appendChild(el("p","sr","An example payday. "+fmt0(W.pay)+" pay arrives. "+W.transfers.map(function(t,i){
+    return "Transfer "+(i+1)+": move "+fmt0(t.amount)+" to "+t.say+(t.saysBills?", which pays "+t.saysBills:"")+"."}).join(" ")+
+    " "+fmt0(left)+" is left over, yours to spend. All "+bills+" bills are covered."));
+  var stack=el("div","su-pic-stack");stack.setAttribute("aria-hidden","true");var card=el("div","su-pic-card");stack.appendChild(card);
+  card.appendChild(put(el("div","su-pic-pay"),welcomeBadge(W.from.name,W.from.colour),el("span","su-pic-pl","Pay in \u00b7 "+W.from.name),el("span","su-pic-amt",fmt0(W.pay))));
+  var ol=el("ol","su-pic-list");W.transfers.forEach(function(t,i){
+    var r=put(el("span","su-pic-route"),el("span",null,"Move to"),el("b",null,t.to));r.insertBefore(welcomeBadge(t.to,t.colour),r.lastChild); // the badge has no text, so no space of its own
+    var li=put(el("li","su-pic-tr"),el("span","su-pic-n",String(i+1)),r,el("span","su-pic-amt",fmt0(t.amount)));
+    if(t.bills){var ch=el("span","su-pic-chips");t.bills.forEach(function(b){var x=el("span","su-pic-chip",b);x.appendChild(welcomeTick());put(ch,x)});
+      if(t.more)put(ch,el("span","su-pic-chip more","+"+t.more));put(li,ch)}
+    ol.appendChild(li)});card.appendChild(ol);
+  var hv=el("span","su-pic-hv",fmt0(left));hv.id="su_pic_left";
+  var ht=el("span","su-pic-ht");ht.appendChild(el("b",null,"left over,"));ht.appendChild(document.createTextNode(" yours to spend"));
+  var cov=el("span","su-pic-cov");cov.id="su_pic_covered";cov.appendChild(welcomeTick());cov.appendChild(document.createTextNode("All "+bills+" bills covered"));
+  card.appendChild(put(el("div","su-pic-hero"),hv,ht,cov));fig.appendChild(stack);
+  fig.appendChild(el("figcaption","small muted","An example. If pay won't stretch, Dovetail says which account will be short."));return fig}
 
+/* 2.17 (docs/payperiods.md 13.2, L15): "A recent payday (optional)", a date field with its hint, for someone paid weekly,
+   every two or four weeks (setup step 2's #su_pon_<i>, Settings › People's #pp_on_<id>). on(value) gets "YYYY-MM-DD", or
+   "" when it's cleared. */
+var PAYDAY_HINT="Any payday in the last few weeks, or the next one, as it usually falls (not one moved for a bank holiday). With it, Dovetail counts your paydays and spots an extra one.",
+  PAYDAY_BAD="Choose a date from 2000 to 2099, or leave it empty.",PAYDAY_PART="Finish the date, or clear it all.";
+/* A date field with only part of a date in it (it reads as empty). */
+function paydayPart(i){return !!(i&&!i.value&&i.validity&&i.validity.badInput)}
+function paydayField(id,v,on){var w=el("div"),i=el("input","inp");i.type="date";i.id=id;i.min="2000-01-01";i.max="2099-12-31";i.value=validDate(v)?v:"";
+  var h=el("div","small muted",PAYDAY_HINT);h.id=id+"_h";var m=el("div","hint err");m.id=id+"_msg";m.setAttribute("aria-live","polite");i.setAttribute("aria-describedby",h.id+" "+m.id);
+  // Saved when a whole date is chosen (change) or the field is left (blur), never on each keystroke: a part of the date
+  // being typed again reads as empty, which mustn't remove the date (or a first pay with it). Only a field left empty
+  // removes it; a date that can't be stored says so and changes nothing (on(value, true) is told, for setup's Next).
+  // A date with a part cleared reads as empty too (validity.badInput): left like that, it says so and changes nothing. A
+  // field cleared as a whole is saved at once (so leaving the app straight after keeps it).
+  function commit(left){var x=i.value;
+    if(!x&&paydayPart(i)){if(left){m.textContent=PAYDAY_PART;i.setAttribute("aria-invalid","true")}return}
+    if(!x){m.textContent="";i.removeAttribute("aria-invalid");on("");return}
+    if(!paydayDateOk(x)){if(left){m.textContent=PAYDAY_BAD;i.setAttribute("aria-invalid","true");on(x,true)}return}
+    m.textContent="";i.removeAttribute("aria-invalid");on(x)}
+  i.addEventListener("change",function(){commit(document.activeElement!==i||(i.value===""&&!paydayPart(i)))});i.addEventListener("blur",function(){commit(true)});
+  w.appendChild(labeled("A recent payday (optional)",i));w.appendChild(h);w.appendChild(m);return w}
 /* Step 2: who's paid, and how much. Other regular income is optional, behind a link until there is some. */
 function suPay(box,s){
   var c=suCard(box,"su_h_pay","Who gets paid?");
   c.appendChild(el("p","small","Take-home pay is the money that actually reaches your bank account, after tax, National Insurance and pension. It's the ‘net pay’ on a payslip, or check your bank statement."));
-  // 2.13: what Dovetail works with (the product's limits), plainly.
-  c.appendChild(el("p","small","Dovetail works with monthly pay, in pounds. Paid a different amount each month? Use a typical month. You'll type the real figure each payday."));
-  c.appendChild(el("p","small muted","Not employed? Use what you usually receive each month, such as benefits, a pension or self-employed income. No money of your own coming in? Leave it empty."));
+  // 2.13: what Dovetail works with (the product's limits), plainly. 2.16: pay can come monthly, every four weeks, every two
+  // weeks or weekly (docs/payperiods.md 6.2, Appendix A); and Universal Credit.
+  c.appendChild(el("p","small","Dovetail works in pounds. Pay can come monthly, every four weeks, every two weeks or weekly. Paid a different amount each time? Use a typical amount: you'll type what actually arrived."));
+  c.appendChild(el("p","small muted","Not employed? Use what you usually receive, such as a pension or self-employed income. Universal Credit is paid monthly: count it as the pay of the person whose account it goes into, and type the amount from your statement each month. No money of your own coming in? Leave it empty."));
   s.people.forEach(function(p,ix){var row=el("div","box");row.setAttribute("role","group");row.setAttribute("aria-label","Person "+(ix+1));var g=el("div","su-pair");
     var n=textIn(p.name,function(v){p.name=v},"su_p_"+ix);n.autocomplete="off";n.placeholder="Person "+(ix+1);g.appendChild(labeled("Name",n));
-    g.appendChild(labeled("Usual take-home pay (£)",suMoney(p.pay,function(v){p.pay=v},"su_pu_"+ix)));row.appendChild(g);
+    // 2.16: "How often they're paid" (every month unless chosen); on a pattern the pay is pay each time, with what that
+    // comes to a month underneath.
+    var ev=suEvery(p),ab=null;
+    g.appendChild(labeled(ev?"Take-home pay each time (£)":"Usual take-home pay (£)",suMoney(p.pay,function(v){p.pay=v;if(ab)sayLater(ab,suAbout(p))},"su_pu_"+ix)));row.appendChild(g);
+    row.appendChild(labeled("How often they're paid",selectIn(EVERY_OPTS,ev?String(ev):"",function(v){if(v)p.every=Number(v);else delete p.every;suRedraw("su_pf_"+ix)},"su_pf_"+ix)));
+    if(ev){ab=el("div","small muted",suAbout(p));ab.id="su_pm_"+ix;ab.setAttribute("aria-live","polite");row.appendChild(ab);
+      // 2.17 (13.2, L15): a recent payday, optional, so Dovetail can count the paydays (setupSettings makes it pattern.on).
+      row.appendChild(paydayField("su_pon_"+ix,p.on,function(v){if(v)p.on=v;else delete p.on}))}
     if(s.people.length>1){var x=el("button","btn ghost","Remove");x.setAttribute("aria-label","Remove person "+(ix+1));x.addEventListener("click",function(){s.people.splice(ix,1);suRedraw("su_addp")});
       var xr=el("div","btnrow");xr.appendChild(x);row.appendChild(xr)}
     c.appendChild(row)});
   var add=el("button","linkbtn","+ Add someone");add.id="su_addp";add.addEventListener("click",function(){s.people.push({id:uid("p"),name:"",pay:"",payAccount:null});suRedraw("su_p_"+(s.people.length-1));reveal($("su_p_"+(s.people.length-1)).closest(".box"))});c.appendChild(add);
   function addIncome(){s.income.push({id:uid("i"),name:"",amount:"",account:null});suRedraw("su_in_"+(s.income.length-1));reveal($("su_in_"+(s.income.length-1)).closest(".box"))}
   if(!s.income.length){var ai=el("button","linkbtn su-alone","+ Add other income");ai.id="su_addi";ai.addEventListener("click",addIncome);box.appendChild(ai)}
-  else{var c2=suCard(box,"su_h_inc","Any other regular income?","Money that comes in every month besides pay, such as Child Benefit. You'll choose the account it goes into in step 4.");
+  else{var c2=suCard(box,"su_h_inc","Any other regular income?","Money that comes in every month besides pay, such as Child Benefit. You'll choose the account it goes into in step 3.");
     s.income.forEach(function(x,ix){var row=el("div","box");row.setAttribute("role","group");row.setAttribute("aria-label","Other income "+(ix+1));var g=el("div","su-pair");
       var n=textIn(x.name,function(v){x.name=v},"su_in_"+ix);n.autocomplete="off";n.placeholder="e.g. Child Benefit";g.appendChild(labeled("Name",n));
       g.appendChild(labeled("Amount a month (£)",suMoney(x.amount,function(v){x.amount=v},"su_inv_"+ix)));row.appendChild(g);
@@ -1817,8 +2415,13 @@ function suPay(box,s){
       var rr=el("div","btnrow");rr.appendChild(rm);row.appendChild(rr);c2.appendChild(row)});
     var more=el("button","linkbtn","+ Add other income");more.id="su_addi";more.addEventListener("click",addIncome);c2.appendChild(more)}
   setupNav(box,{back:true,onNext:function(){var bad=[];
-    s.people.forEach(function(p,ix){if(parseMoney(p.pay,false).invalid)bad.push("su_pu_"+ix)});
-    if(bad.length)return suFail("Type pay as an amount, like 1850.00.",bad);
+    // 2.16: pay each time is above £0 and up to £1,000,000 (validPattern).
+    s.people.forEach(function(p,ix){var r=parseMoney(p.pay,false);if(r.invalid||suEvery(p)&&!r.empty&&r.value>PAY_EACH_MAX)bad.push("su_pu_"+ix)});
+    // 2.17: a recent payday is a real date from 2000 to 2099, or left empty.
+    var badOn=s.people.map(function(p,ix){return suEvery(p)&&p.on&&!paydayDateOk(p.on)?"su_pon_"+ix:null}).filter(Boolean),partOn=s.people.map(function(p,ix){return suEvery(p)&&paydayPart($("su_pon_"+ix))?"su_pon_"+ix:null}).filter(Boolean);
+    if(!bad.length&&partOn.length)return suFail(PAYDAY_PART,partOn);
+    if(!bad.length&&badOn.length)return suFail(PAYDAY_BAD,badOn);
+    if(bad.length)return suFail(s.people.some(function(p,ix){return suEvery(p)&&bad.indexOf("su_pu_"+ix)>=0})?"Type pay as an amount, like 420.00.":"Type pay as an amount, like 1850.00.",bad);
     var res=readRows(s.income);if(res.errors.length)return suFail("Each income needs a name and an amount a month, like 110.00.",res.errors.map(function(e){return (e.f==="name"?"su_in_":"su_inv_")+e.i}));
     // 2.12.1: only when nobody's pay is in. Someone with no pay of their own (a partner at home, a student) is fine:
     // step 4 asks about them, and the last step says whose pay counts as £0.
@@ -1829,14 +2432,32 @@ function suPay(box,s){
 /* Step 3: one payday for the household (the day transfers are made). Skipping it leaves months following the calendar. */
 function suNextPayday(pc){var nx=nextPayday(pc);return nx?"Your next payday: "+longDate(nx.date)+". That pay is for "+mLabel(nx.month)+".":""}
 function suPaydayCfg(){return setupPayday(setup.payday)}
-function suPayday(box,s){var multi=s.people.length>1,pd=s.payday;
+/* 2.16: setup's people on a pattern, and a person's (7, 14 or 28, or null for every month). */
+function suEvery(p){return PAY_EVERY[Number(p&&p.every)]?Number(p.every):null}
+function suPats(){return setup?setup.people.filter(suEvery):[]}
+/* "About £1,690.00 a month over a year." for what's typed as pay each time ("" until there's an amount). */
+function suAbout(p){var v=parseMoney(p.pay,false);return !v.invalid&&v.value>0?aboutWords({pattern:{every:suEvery(p),each:r2(v.value)}}):""}
+/* 2.16: step 3 when anyone is on a pattern (6.2): the transfer day, required (no Skip, no "same day" question). */
+function suTransferDay(box,s,pats){var pd=s.payday,q=pats[0],mon=s.people.some(function(p){return !suEvery(p)});
+  var c=suCard(box,"su_h_day","When will you make the transfers?");
+  var it=el("p","small",mon?possessive(personName(q,s.people.indexOf(q)))+" pay comes every "+PAY_EVERY[suEvery(q)].word+", so its date moves each month. Pick one day a month to make the transfers: Dovetail counts the pay that's arrived since the last one. Most households pick the monthly payday."
+    :"Pick one day a month to make the transfers: Dovetail counts the pay that's arrived since the last one. A day just before your rent or mortgage goes out works well.");it.id="su_day_intro";c.appendChild(it);
+  c.appendChild(labeled("Transfer day",selectIn([["","Choose a day"]].concat(DAY_OPTS),String(pd.day||""),function(v){pd.day=v;suRedraw("su_day")},"su_day")));
+  if(pd.day&&pd.day!=="last")c.appendChild(checkIn("If it falls on a weekend or bank holiday, do it on the working day before",pd.weekend!==false,function(v){pd.weekend=v;suRedraw("su_wk")},"su_wk"));
+  var nx=pd.day?nextPayday(suPaydayCfg()):null;if(nx){var nl=el("div","banner good","Your next transfer day: "+longDate(nx.date)+". It's for "+mLabel(nx.month)+".");nl.id="su_next_payday";c.appendChild(nl)}
+  // 2.17 (13.2, L15): with a recent payday, each person's last pay by then: "Kerry's last pay before then: Thursday 15
+  // October." (two: "…: Thursday 15 October, and Jordan's: Friday 23 October.").
+  var nb=c.querySelector("#su_next_payday");if(nb){var lt=lastPayWords({people:s.people.map(function(q){var e=suEvery(q);return {name:q.name,pattern:e&&paydayDateOk(q.on)?{every:e,each:1,on:q.on}:undefined}})},nx.date);
+    if(lt)nb.appendChild(document.createTextNode(" "+lt))}
+  setupNav(box,{back:true,onNext:function(){if(!pd.day)return suFail("Choose a transfer day.",["su_day"]);delete s.skip[3];enterAccounts();goStep(4)}})}
+function suPayday(box,s){var multi=s.people.length>1,pd=s.payday,pats=suPats();if(pats.length)return suTransferDay(box,s,pats);
   var c=suCard(box,"su_h_day","When does pay arrive?");
   if(multi){var fs=segRadios("su_same",s.people.length===2?"Are you both paid on the same day?":"Are you all paid on the same day?",[["yes","Yes"],["no","No"]],s.sameDay===true?"yes":s.sameDay===false?"no":"",function(v){s.sameDay=v==="yes";suRedraw("su_same_"+v)});
     fs.classList.add("su-q");fs.querySelector(".segrow").classList.add("two");c.appendChild(fs)}
   if(!multi||s.sameDay!=null){
     var opts=[["","Choose a day"]];for(var i=1;i<=31;i++)opts.push([String(i),ordinal(i)+" of the month"]);opts.push(["last","Last working day of the month"]);
     c.appendChild(labeled(multi&&s.sameDay===false?"Pick the day you'll make the transfers, once everyone's pay is in.":"Payday",selectIn(opts,String(pd.day||""),function(v){pd.day=v;suRedraw("su_day")},"su_day")));
-    if(pd.day&&pd.day!=="last")c.appendChild(checkIn("If it falls on a weekend, we're paid the Friday before",pd.weekend!==false,function(v){pd.weekend=v;suRedraw("su_wk")},"su_wk"));
+    if(pd.day&&pd.day!=="last")c.appendChild(checkIn(multi&&s.sameDay===false?"If it falls on a weekend or bank holiday, do it on the working day before":"If it falls on a weekend or bank holiday, we're paid the working day before",pd.weekend!==false,function(v){pd.weekend=v;suRedraw("su_wk")},"su_wk"));
     var line=pd.day?suNextPayday(suPaydayCfg()):"";if(line){var nl=el("div","banner good",line);nl.id="su_next_payday";c.appendChild(nl)}}
   setupNav(box,{back:true,skip:function(){s.skip[3]=true;enterAccounts();goStep(4)},onNext:function(){delete s.skip[3];enterAccounts();goStep(4)}})}
 
@@ -1902,6 +2523,7 @@ function suMoneyQuestions(c,s){var a=s.ans,ppl=suPeople(),n=ppl.length,nm=functi
     if(a.gets[p.id]==="yes")suAmountIn(c,"How much a month (\u00a3)",a.getsAmt[p.id],function(x){a.getsAmt[p.id]=x},"su_getsv_"+i)});
   // Board: with three or more, anyone but the first can pay a set amount instead of sharing.
   if(n>2&&["pool","contribute","housekeeping"].indexOf(s.style)>=0){var bh=el(s.change?"h5":"h3",null,"Everyone in the household");bh.id="su_h_board";c.appendChild(bh);
+    var bx=el("p","small muted",BOARD_IS+" Someone who pays board keeps the rest of their pay.");bx.id="su_board_is";c.appendChild(bx);
     s.people.forEach(function(p,i){if(!i)return;suYesNo(c,"su_board_"+i,"Is "+nm(i)+" part of the shared money, or do they pay board?",a.board[p.id],function(v){a.board[p.id]=v},[["no","Part of it"],["yes","Pays board"]]);
       if(a.board[p.id]==="yes")suAmountIn(c,possessive(nm(i))+" board a month (\u00a3)",a.boardAmt[p.id],function(x){a.boardAmt[p.id]=x},"su_boardv_"+i)})}}
 /* The starting-point pictures (one person, or how pay reaches the joint account when pooling). */
@@ -1963,10 +2585,18 @@ function suAccounts(box,s){var multi=s.people.length>1;suSyncFunding();
 /* The diagram, the worked example and, when more than one account keeps what's left, a plain note. */
 function suDiagramBox(sc){var dg=el("div","box su-dia");dg.id="su_dia";var dh=el(setup&&setup.change?"h5":"h3",null,"How money moves between them");dh.id="su_h_dia";dg.appendChild(dh);dg.appendChild(flowDiagram(sc,"su_h_dia"));
   var ex=suExample(sc);if(ex){var ep=el("p","small",ex);ep.id="su_example_line";dg.appendChild(ep)}
+  // 2.16 (E17): one person on a pattern with the pay, bills and spending picture: setupSettings saves Bills → pay account
+  // → Spending, so say why the money moves that way.
+  var e17=suE17();if(e17){var en=el("p","small",e17);en.id="su_e17";dg.appendChild(en)}
   // Own accounts that each keep what's left (2.12) are the point of those answers, so no note for them.
   // 2.13: a boarder's own account isn't counted: their money isn't shown as the household's left over.
   var out=boarderAccounts(sc),roots=rootIds(sc).filter(function(id){return !out[id]}).length;if(roots>1&&["contribute","housekeeping","separate"].indexOf(setup.shape)<0){var rn=NUMBER_WORDS[roots]||String(roots),cap=rn.charAt(0).toUpperCase()+rn.slice(1);var mr=el("div","banner",cap+" accounts keep what's left, so you'll see "+rn+" left-over amounts. That's fine if it's what you want.");mr.id="su_roots";dg.appendChild(mr)}
   return dg}
+/* 2.16 (E17): the line under the picture for one person on a pattern with a pay, bills and spending account, else "". */
+function suE17(){var s=setup;if(!s||s.change||s.people.length!==1||s.shape!=="split")return "";var q=s.people[0],ev=suEvery(q);if(!ev)return "";
+  var role=function(r){return s.accounts.filter(function(a){return a.role===r})[0]},pa=role("pay"),bi=role("bills"),sp=role("spending");
+  if(!pa||!bi||!sp||q.payAccount!==pa.id||pa.leftoverTo!==bi.id||bi.leftoverTo!==sp.id||sp.leftoverTo)return "";
+  var nm=personName(q,0);return "Because "+nm+" is paid every "+PAY_EVERY[ev].word+", "+suAcctName(bi)+" is topped up from "+suAcctName(pa)+" each month, and what's left goes on to "+suAcctName(sp)+"."}
 /* An account renamed: its name in every list and in the diagram, without redrawing the field being typed in. */
 function suRefreshNames(a){var name=suAcctName(a);
   var b="#"+suBoxId()+" ";document.querySelectorAll(b+'select[id^="su_pa_"] option,'+b+'select[id^="su_ia_"] option,'+b+'select[id^="su_l_"] option').forEach(function(o){
@@ -1974,15 +2604,27 @@ function suRefreshNames(a){var name=suAcctName(a);
   var old=$("su_dia");if(old)old.parentNode.replaceChild(suDiagramBox(suCfg()),old)}
 /* The worked example under the diagram (setupExample, calc.js), from the pay typed in step 2 and this month's bills
    typed for each account. */
-function suExample(sc){var s=setup,m=mNum(thisMonthFor()),bills={};
-  var c={accounts:sc.accounts,people:sc.people.map(function(p,i){return Object.assign({},p,{usualPay:num(s.people[i].pay)})})};
-  Object.keys(s.bills).forEach(function(id){bills[id]=readRows(s.bills[id]||[]).items.reduce(function(t,x){return applies({months:x.months},m)?t+x.amount:t},0)});
+function suExample(sc){var s=setup,m=mNum(thisMonthFor()),bills={},bc=Object.assign({bills:[],income:[]},sc);
+  // 2.16: someone on a pattern counts as setupSettings saves them: pay each time, and usual pay over a year ÷ 12.
+  var c={accounts:sc.accounts,people:sc.people.map(function(p,i){var q=s.people[i],x=Object.assign({},p,{usualPay:num(q.pay)}),ev=suEvery(q);delete x.pattern;
+    if(ev&&num(q.pay)>0){x.pattern={every:ev,each:r2(num(q.pay))};x.usualPay=usualMonthly(x)}return x})};
+  // 2.14: with a rough figure, the account's bills that month are what's not listed yet plus the listed bills due (5.2).
+  Object.keys(s.bills).concat(Object.keys(s.figures||{})).forEach(function(id){if(bills.hasOwnProperty(id))return;var it=readRows(s.bills[id]||[]).items;
+    bills[id]=it.reduce(function(t,x){return applies({months:x.months},m)?t+x.amount:t},0);
+    var f=s.skip[5]||!accById(sc,id)||estimateBlock(bc,id)?null:parseMoney((s.figures||{})[id],false);
+    if(f&&!f.empty&&!f.invalid&&f.value>0)bills[id]+=Math.max(0,f.value-it.reduce(function(t,x){return inFigure({months:x.months})?t+x.amount:t},0))});
   return setupExample(c,bills)}
 function thisMonthFor(){return defaultMonth(setup.skip[3]?{}:suPaydayCfg())}
 
 /* Step 5: bills, account by account in flow order. The usual bills accounts (nobody's paid into them and they pass what's
    left on) open with three rows; with none, the account everyone is paid into if it passes what's left on (one person's
-   "bills account, then a spending account"), else the account that keeps what's left. The others are a link until opened. */
+   "bills account, then a spending account"), else the account that keeps what's left. The others are a line until opened.
+   2.14 (docs/onboarding.md 5.1 to 5.5 and 5.10): two links at the top, "Paste a list" and "Not sure of every bill? Start
+   with a rough figure"; help behind "How do I find my bills?"; in each section a running total and "Add a rough figure for
+   the rest" (not where estimateBlock says no: setup says why instead); the suggestions grouped; someone's own account a
+   slim line with its own few suggestions; and a card at the end for bills that don't come every month (its rows are kept
+   with their account's, marked nm, so they're saved and checked like the others). A household that lists everything sees
+   two links and a running total, and taps no more than before. Nothing records which way a household chose. */
 function enterBills(){var s=setup,sc=suCfg(),order=flowOrder(sc),paid=sc.people.map(function(p){return p.payAccount});
   var match=order.filter(function(id){return paid.indexOf(id)<0&&parentId(sc,id)});if(!match.length)match=[sharedPayAccount(sc)||suRoot(sc)];
   // 2.12: an account several people pay for is where the bills go; when each pays certain bills, every own account opens.
@@ -1992,56 +2634,203 @@ function enterBills(){var s=setup,sc=suCfg(),order=flowOrder(sc),paid=sc.people.
 /* Suggestions: plain buttons. One hides once a row in its section has that name, whether it was tapped or typed
    (suChipsRefresh runs as names are typed). */
 function suChips(sec,names,rows,label,onPick){var g=el("div","fchips su-chips");g.setAttribute("role","group");g.setAttribute("aria-label",label);
-  names.forEach(function(n){var b=el("button","fchip"),pl=el("span",null,"+ ");pl.setAttribute("aria-hidden","true");b.appendChild(pl);b.appendChild(document.createTextNode(n));b.type="button";
-    b.setAttribute("data-name",n.trim().toLowerCase());b.addEventListener("click",function(){onPick(n)});g.appendChild(b)});
+  names.forEach(function(n){g.appendChild(suChipBtn(n,n,function(){onPick(n)}))});
   sec.appendChild(g);suChipsRefresh(g,rows);return g}
+/* One suggestion: "+ " (hidden from screen readers) and its label; data-name is the name it fills in, which hides it. */
+function suChipBtn(label,name,on){var b=el("button","fchip"),pl=el("span",null,"+ ");pl.setAttribute("aria-hidden","true");b.appendChild(pl);b.appendChild(document.createTextNode(label));b.type="button";
+  b.setAttribute("data-name",String(name).trim().toLowerCase());b.addEventListener("click",on);return b}
 function suChipsRefresh(g,rows){var taken=takenNames(rows),any=false;
   g.querySelectorAll("button[data-name]").forEach(function(b){var t=taken.indexOf(b.getAttribute("data-name"))>=0;b.hidden=t;if(!t)any=true});g.hidden=!any}
 function takenNames(rows){return rows.map(function(r){return String(r.name||"").trim().toLowerCase()}).filter(Boolean)}
+/* 2.14: someone's own account, in a household of two or more (only they are paid into it), except when each pays certain
+   bills, where every account is a bills account, and the usual bills account (a bill payer's own, say). Its section
+   suggests its own few bills (5.10). */
+function suOwn(sc,id){return setup.people.length>1&&setup.shape!=="separate"&&sc.people.filter(function(p){return p.payAccount===id}).length===1&&id!==defaultBillAccount(sc)}
+/* The household so far, as estimateBlock reads it (5.9: no figure on a boarder's own account, nor on someone's own account
+   under "what's left after own bills" or "so we each keep the same"), and setup's words for why. */
+function suFigCfg(){suSyncFunding();return Object.assign({bills:[],income:[],budgets:[],savings:[]},suCfg())}
+function suFigWhy(why){return why==="board"?"A rough figure isn't offered here: it's their own money, outside the household's figures.":why?"With this split, list your own bills so the shares are fair.":""}
+/* A section's bills as typed so far (rows that can be saved): how many, what they come to a month (a yearly bill as a
+   twelfth), and listed: those that come in 7 or more months a year, which a rough figure covers (inFigure). */
+function suBillSums(rows){var it=readRows(rows).items;return {n:it.length,monthly:it.reduce(function(t,x){return t+x.amount*(x.months.length?x.months.length:12)/12},0),
+  listed:r2(it.reduce(function(t,x){return inFigure({months:x.months})?t+x.amount:t},0))}}
+/* The running total ("Joint: 14 bills, £1,642.30 a month") and, with a figure, a note when the bills listed already come to
+   more than it: redrawn in place as amounts are typed (never the whole step, which would move focus). */
+function suBillLive(id){var s=setup,a=suAcct(id);if(!a)return;var ai=s.accounts.indexOf(a),name=suAcctName(a),sm=suBillSums(s.bills[id]||[]),t=$("su_b_"+ai+"_tot");
+  if(t){t.textContent=sm.n?name+": "+plural(sm.n,"bill")+", "+fmt(sm.monthly)+" a month":"";t.hidden=!sm.n}
+  var n=$("su_fig_"+ai+"_n");if(n){var f=parseMoney(s.figures[id],false),over=!f.empty&&!f.invalid&&f.value>0&&sm.listed>f.value;
+    n.textContent=over?"Your bills here already add up to "+fmt(sm.listed)+", more than the "+fmt(f.value)+" you put. Raise the figure if there are more to come, or leave it out.":"";n.hidden=!over}}
+/* The check against what's moved into the account now (5.2; setup only, never saved): when the figure is well below it
+   (by £20 and 5% or more), ask once whether the rest is bills too. "Yes, it's bills" makes the figure that amount. */
+function suFigAsk(id){var s=setup,a=suAcct(id);if(!a)return;var ai=s.accounts.indexOf(a),name=suAcctName(a),box=$("su_figask_"+ai);if(!box)return;clear(box);
+  var f=parseMoney(s.figures[id],false),m=parseMoney(s.figIn[id],false);if(s.figAsked[id]||f.empty||f.invalid||m.empty||m.invalid||!(f.value>0))return;
+  var gap=r2(m.value-f.value);if(!(gap>=20&&gap>=m.value*0.05))return;
+  var w=el("div","banner col"),q=el("div",null,"You move "+fmt(m.value)+" into "+name+" but put "+fmt(f.value)+" for bills. Is the other "+fmt(gap)+" for bills too?");q.id="su_figask_"+ai+"_q";
+  w.setAttribute("role","group");w.setAttribute("aria-labelledby",q.id);w.appendChild(q);
+  var br=el("div","btnrow"),y=el("button","btn","Yes, it's bills"),n=el("button","btn ghost","No, it's spending");y.type=n.type="button";y.id="su_figask_"+ai+"_yes";n.id="su_figask_"+ai+"_no";
+  y.addEventListener("click",function(){s.figures[id]=m.value.toFixed(2);s.figAsked[id]="yes";suRedraw("su_fig_"+ai)});
+  n.addEventListener("click",function(){s.figAsked[id]="no";suRedraw("su_figin_"+ai)});br.appendChild(y);br.appendChild(n);w.appendChild(br);box.appendChild(w)}
+/* The figure box in an account's section (5.2): the question, what to count, the figure, rounding up, "Do this together"
+   with two or more people, the check against what's moved in now, and "No bills from here" while nothing is listed. */
+function suFigBox(s,id,ai,name,rows,own){var fid="su_fig_"+ai,b=el("div","box su-fig");b.id="su_figbox_"+ai;b.setAttribute("role","group");b.setAttribute("aria-labelledby",fid+"_l");
+  var q=el("label","su-figq","Roughly how much goes out of "+name+" in bills each month?");q.id=fid+"_l";q.htmlFor=fid;b.appendChild(q);
+  var hp=el("p","small","Count what leaves by itself: direct debits, standing orders and subscriptions. Count Council Tax as monthly. Leave out bills that come only a few times a year; they have their own question below. Food and fuel come later, as spending.");hp.id=fid+"_h";b.appendChild(hp);
+  var mb=el("div","money su-figmoney");mb.appendChild(el("span",null,"£"));var inp=el("input");inp.id=fid;inp.inputMode="decimal";inp.autocomplete="off";inp.placeholder="0.00";inp.value=s.figures[id]||"";
+  inp.setAttribute("aria-describedby",fid+"_h "+fid+"_r");inp.setAttribute("enterkeyhint","next");
+  inp.addEventListener("input",function(){s.figures[id]=inp.value;suBillLive(id)});
+  inp.addEventListener("change",function(){var r=parseMoney(inp.value,false);if(!r.empty&&!r.invalid)inp.value=r.value.toFixed(2);s.figures[id]=inp.value;suBillLive(id);suFigAsk(id)});
+  mb.appendChild(inp);b.appendChild(mb);
+  var rp=el("p","small muted","Round up if you're unsure: anything over stays in the account. You can change it any time.");rp.id=fid+"_r";b.appendChild(rp);
+  if(s.people.length>1&&!own)b.appendChild(el("p","small","Do this together if you can. One of you may know the joint bills better."));
+  var nt=el("p","small su-fignote");nt.id=fid+"_n";nt.hidden=true;b.appendChild(nt);
+  var an=textIn(s.figIn[id]||"",function(v){s.figIn[id]=v},"su_figin_"+ai,true);an.placeholder="0.00";
+  an.addEventListener("change",function(){s.figIn[id]=an.value;suFigAsk(id)});
+  var aw=labeled("Already move a set amount into "+name+" each month? (optional, £)",an);aw.classList.add("su-amt");b.appendChild(aw);
+  var ask=el("div","su-figask");ask.id="su_figask_"+ai;ask.setAttribute("aria-live","polite");b.appendChild(ask);
+  var br=el("div","btnrow su-figbtns");
+  if(!rows.some(function(r){return !r.nm&&rowUsed(r)})){var nb=el("button","btn ghost","No bills from here");nb.type="button";nb.id=fid+"_none";
+    nb.addEventListener("click",function(){delete s.figOpen[id];delete s.figures[id];delete s.figIn[id];s.bills[id]=rows.filter(function(r){return r.nm||rowUsed(r)});s.billOpen[id]=false;s.noBills[id]=true;suRedraw("su_b_"+ai+"_open")});br.appendChild(nb)}
+  var off=el("button","linkbtn","Don't use a rough figure");off.type="button";off.id=fid+"_off";
+  off.addEventListener("click",function(){delete s.figOpen[id];delete s.figures[id];delete s.figIn[id];suRedraw("su_b_"+ai+"_fig")});br.appendChild(off);b.appendChild(br);
+  return b}
+/* A bills section's suggestions: the six most common (in someone's own account, its own few), then the groups, one open
+   at a time (5.5). With a figure open they double as "Did your figure include…?". Returns the chip groups, for
+   suChipsRefresh as names are typed. pick(name, options) fills a row. */
+function suBillChips(sec,s,id,ai,name,rows,own,fig,pick){var out=[],first=BILL_SUGGESTIONS.filter(function(x){return own?x[1].own:x[1].top}),lid="su_b_"+ai+"_cl";
+  if(fig){var l=el("p","small su-chiplbl","Did your figure include…?");l.id=lid;sec.appendChild(l)}
+  var g=el("div","fchips su-chips");g.setAttribute("role","group");if(fig)g.setAttribute("aria-labelledby",lid);else g.setAttribute("aria-label","Common bills paid from "+name);
+  first.forEach(function(x){g.appendChild(suChipBtn(x[0],x[0],function(){pick(x[0],x[1])}))});sec.appendChild(g);out.push(g);
+  var open=s.chipGrp[id],mr=el("div","su-more");mr.setAttribute("role","group");mr.setAttribute("aria-label","More bills paid from "+name+", by kind");
+  var ml=el("span","small muted","More:");ml.setAttribute("aria-hidden","true");mr.appendChild(ml);
+  BILL_GROUPS.forEach(function(gr){var rest=BILL_SUGGESTIONS.filter(function(x){return x[1].g===gr[0]&&first.indexOf(x)<0});if(!rest.length)return;
+    var b=el("button","fchip su-cgrp",gr[1]);b.type="button";b.id="su_b_"+ai+"_g_"+gr[0];b.setAttribute("aria-expanded",open===gr[0]?"true":"false");if(open===gr[0])b.setAttribute("aria-controls","su_b_"+ai+"_gc");
+    b.addEventListener("click",function(){s.chipGrp[id]=open===gr[0]?null:gr[0];suRedraw(b.id)});mr.appendChild(b)});
+  sec.appendChild(mr);
+  var gr=open&&BILL_GROUPS.filter(function(x){return x[0]===open})[0];
+  if(gr){var gc=el("div","fchips su-chips su-gchips");gc.id="su_b_"+ai+"_gc";gc.setAttribute("role","group");gc.setAttribute("aria-label",gr[1]+" bills");
+    BILL_SUGGESTIONS.filter(function(x){return x[1].g===open&&first.indexOf(x)<0}).forEach(function(x){gc.appendChild(suChipBtn(x[0],x[0],function(){pick(x[0],x[1])}))});sec.appendChild(gc);out.push(gc)}
+  out.forEach(function(x){suChipsRefresh(x,rows)});return out}
+/* "How do I find my bills?": the help, one tap away rather than on screen (5.1). */
+function suFindHelp(box,s){var b=el("button","linkbtn su-find","How do I find my bills?");b.type="button";b.id="su_find";b.setAttribute("aria-expanded",s.findOpen?"true":"false");b.setAttribute("aria-controls","su_find_tip");
+  b.addEventListener("click",function(){s.findOpen=!s.findOpen;suRedraw("su_find")});box.appendChild(b)}
+function suFindTip(){var tip=el("div","su-tip");tip.id="su_find_tip";tip.appendChild(document.createTextNode("Most banking apps list an account's direct debits and standing orders together: check the account each one comes out of. Or look at last month's bank statement. Payments marked DD (Direct Debit) or SO (Standing Order) are usually regular bills."));return tip}
 function suBills(box,s){
+  var sc=suCfg(),bc=suFigCfg(),order=flowOrder(sc),ai=function(id){return s.accounts.indexOf(suAcct(id))},shown=function(id){return s.billOpen[id]||(s.bills[id]||[]).some(function(r){return !r.nm})};
   box.appendChild(el("p",null,"Add the bills that go out regularly. Rough amounts are fine: you can change them any time."));
-  var tip=el("div","su-tip");tip.appendChild(el("b",null,"Not sure what your bills are? "));tip.appendChild(document.createTextNode("Look at last month's bank statement. Payments marked DD (Direct Debit) or SO (Standing Order) are usually regular bills."));box.appendChild(tip);
-  var sc=suCfg();
-  flowOrder(sc).forEach(function(id){var a=suAcct(id),ai=s.accounts.indexOf(a),name=suAcctName(a),rows=s.bills[id]||(s.bills[id]=[]),bid=function(i,f){return "su_b_"+ai+"_"+i+"_"+f};
-    // Accounts that aren't usually for bills (enterBills) and have none yet are one line each, opened in place.
-    if(!s.billOpen[id]&&!rows.length){var ln=el("div","su-bline");ln.style.setProperty("--c",colourVar(a.colour));ln.appendChild(el("b",null,name));
-      var dash=el("span","muted","\u2014");dash.setAttribute("aria-hidden","true");ln.appendChild(dash);
+  // The two links (5.1): paste a list; start with a rough figure (every section a figure can go in that isn't open yet).
+  var figFor=order.filter(function(id){return shown(id)&&!estimateBlock(bc,id)}),lk=el("div","su-toplinks");
+  var pl=el("button","linkbtn","Paste a list");pl.type="button";pl.id="su_paste_open";pl.setAttribute("aria-expanded",s.paste?"true":"false");if(s.paste)pl.setAttribute("aria-controls","su_paste");
+  pl.addEventListener("click",function(){s.paste=s.paste?null:{text:"",res:null,rows:[]};suRedraw(s.paste?"su_paste_text":"su_paste_open")});lk.appendChild(pl);
+  if(figFor.some(function(id){return !s.figOpen[id]})){var fa=el("button","linkbtn","Not sure of every bill? Start with a rough figure");fa.type="button";fa.id="su_fig_all";
+    fa.addEventListener("click",function(){figFor.forEach(function(id){s.figOpen[id]=true});suRedraw("su_fig_"+ai(figFor[0]))});lk.appendChild(fa)}
+  suFindHelp(lk,s);box.appendChild(lk);if(s.findOpen)box.appendChild(suFindTip());
+  if(s.paste){var accts=order.map(function(id){return [id,suAcctName(suAcct(id))]}),existing=[];order.forEach(function(id){readRows(s.bills[id]||[]).items.forEach(function(x){existing.push({name:x.name,amount:x.amount})})});
+    box.appendChild(pasteBox(s.paste,{idp:"su_paste",card:true,heading:"h2",accts:accts,def:defaultBillAccount(sc)||order[0],existing:existing,redraw:suRedraw,
+      onClose:function(){s.paste=null;suRedraw("su_paste_open")},
+      onAdd:function(list){var cleared={};list.forEach(function(x){var rows=s.bills[x.account]||(s.bills[x.account]=[]);
+          if(!cleared[x.account]){cleared[x.account]=1;s.bills[x.account]=rows=rows.filter(function(r){return r.nm||rowUsed(r)})}
+          rows.push({name:x.name,amount:x.amount.toFixed(2),freq:x.freq,month:x.month||"",picked:arr(x.picked).slice()});s.billOpen[x.account]=true;delete s.noBills[x.account]});
+        s.paste=null;suRedraw("su_paste_open");toast("Added "+plural(list.length,"bill"))}}))}
+  order.forEach(function(id){var a=suAcct(id),ai=s.accounts.indexOf(a),name=suAcctName(a),rows=s.bills[id]||(s.bills[id]=[]),bid=function(i,f){return "su_b_"+ai+"_"+i+"_"+f};
+    var mine=[];rows.forEach(function(r,i){if(!r.nm)mine.push(i)});var own=suOwn(sc,id),why=estimateBlock(bc,id),fig=!!s.figOpen[id]&&!why;
+    // A suggestion fills the first empty row (or a new one) and opens the section.
+    function pick(n,pre){var i=-1;mine.forEach(function(j){if(i<0&&!rowUsed(rows[j]))i=j});if(i<0){rows.push(newBillRow());i=rows.length-1}
+      rows[i].name=n;if(pre&&pre.freq){rows[i].freq=pre.freq;if(pre.picked)rows[i].picked=pre.picked.slice()}s.billOpen[id]=true;delete s.noBills[id];
+      suRedraw(bid(i,pre&&pre.freq==="yearly"?"m":"a"));var e=$(bid(i,"n"));if(e)reveal(e.closest(".qa-row"))}
+    // Accounts that aren't usually for bills (enterBills) and have none yet are one line each, opened in place. Someone's own
+    // account has its own few suggestions on the line (5.10): one opens it with that bill filled in.
+    if(!s.billOpen[id]&&!mine.length){var ln=el("div","su-bline");ln.style.setProperty("--c",colourVar(a.colour));ln.appendChild(el("b",null,name));
+      var dash=el("span","muted","—");dash.setAttribute("aria-hidden","true");ln.appendChild(dash);
+      if(s.noBills[id])ln.appendChild(el("span","small muted su-nobills","no bills ·"));
       var op=el("button","linkbtn","+ Add a bill");op.type="button";op.id="su_b_"+ai+"_open";op.setAttribute("aria-label","Add a bill paid from "+name);
-      op.addEventListener("click",function(){s.billOpen[id]=true;rows.push(newBillRow());suRedraw(bid(0,"n"))});ln.appendChild(op);box.appendChild(ln);return}
+      op.addEventListener("click",function(){s.billOpen[id]=true;delete s.noBills[id];rows.push(newBillRow());suRedraw(bid(rows.length-1,"n"))});ln.appendChild(op);
+      if(own){var oc=el("div","fchips su-chips su-linechips");oc.setAttribute("role","group");oc.setAttribute("aria-label","Common bills paid from "+name);
+        BILL_SUGGESTIONS.filter(function(x){return x[1].own}).forEach(function(x){oc.appendChild(suChipBtn(x[0],x[0],function(){pick(x[0],x[1])}))});ln.appendChild(oc)}
+      box.appendChild(ln);return}
     var sec=suCard(box,"su_h_b"+ai,"Paid from "+name);sec.classList.add("su-bsec");sec.style.setProperty("--c",colourVar(a.colour));
-    var chips=suChips(sec,BILL_SUGGESTIONS.map(function(x){return x[0]}),rows,"Common bills paid from "+name,function(n){
-      var i=rows.findIndex(function(r){return !rowUsed(r)});if(i<0){rows.push(newBillRow());i=rows.length-1}
-      var pre=(BILL_SUGGESTIONS.filter(function(x){return x[0]===n})[0]||[])[1];rows[i].name=n;if(pre){rows[i].freq=pre.freq;if(pre.picked)rows[i].picked=pre.picked.slice()}
-      suRedraw(bid(i,pre&&pre.freq==="yearly"?"m":"a"));reveal($(bid(i,"n")).closest(".qa-row"))});
+    if(fig){sec.appendChild(suFigBox(s,id,ai,name,rows,own));if(!own)sec.appendChild(el("p","small su-big","Add the big ones now if you know them: rent or mortgage, Council Tax, energy. The rest can wait."))}
+    var chips=suBillChips(sec,s,id,ai,name,rows,own,fig,pick),live=function(){chips.forEach(function(g){suChipsRefresh(g,rows)});suBillLive(id)};
     var hdr=el("div","qa-head");hdr.setAttribute("aria-hidden","true");hdr.appendChild(el("span",null,"Bill name"));hdr.appendChild(el("span",null,"Amount (£)"));sec.appendChild(hdr);
-    var list=el("div","qa-rows");rows.forEach(function(r,i){list.appendChild(quickRow(r,{id:function(f){return bid(i,f)},noun:"Bill",n:i+1,group:"Bill "+(i+1)+", paid from "+name,freq:true,
-      onFreq:function(){suRedraw(bid(i,"f"))},onName:function(){suChipsRefresh(chips,rows)},
-      onEnter:function(){if(i===rows.length-1){rows.push(newBillRow());suRedraw(bid(i+1,"n"))}else $(bid(i+1,"n")).focus()},
-      onRemove:function(){rows.splice(i,1);suRedraw(rows.length?bid(Math.min(i,rows.length-1),"n"):"su_b_"+ai+"_more")}}))});sec.appendChild(list);
-    var more=el("button","linkbtn","+ Add another bill");more.id="su_b_"+ai+"_more";more.setAttribute("aria-label","Add another bill paid from "+name);more.addEventListener("click",function(){rows.push(newBillRow());suRedraw(bid(rows.length-1,"n"))});sec.appendChild(more)});
+    var list=el("div","qa-rows");mine.forEach(function(i,n){var r=rows[i];list.appendChild(quickRow(r,{id:function(f){return bid(i,f)},noun:"Bill",n:n+1,group:"Bill "+(n+1)+", paid from "+name,freq:true,
+      onFreq:function(){suRedraw(bid(i,"f"))},onName:live,onAmount:live,
+      onEnter:function(){if(n===mine.length-1){rows.push(newBillRow());suRedraw(bid(rows.length-1,"n"))}else $(bid(mine[n+1],"n")).focus()},
+      onRemove:function(){rows.splice(i,1);var m2=mine.filter(function(j){return j!==i}).map(function(j){return j>i?j-1:j});suRedraw(m2.length?bid(m2[Math.min(n,m2.length-1)],"n"):"su_b_"+ai+"_more")}}))});sec.appendChild(list);
+    var more=el("button","linkbtn","+ Add another bill");more.id="su_b_"+ai+"_more";more.setAttribute("aria-label","Add another bill paid from "+name);more.addEventListener("click",function(){rows.push(newBillRow());suRedraw(bid(rows.length-1,"n"))});sec.appendChild(more);
+    var tot=el("p","small su-total");tot.id="su_b_"+ai+"_tot";tot.hidden=true;sec.appendChild(tot);
+    // 5.1: a rough figure for the rest, reached by a link; where it isn't offered, why.
+    if(why){var wn=el("p","small muted",suFigWhy(why));wn.id="su_b_"+ai+"_nofig";sec.appendChild(wn)}
+    else if(!fig){var fl=el("p","small su-figlink");fl.appendChild(document.createTextNode("Not sure you've got them all? "));var fb=el("button","linkbtn","Add a rough figure for the rest");fb.type="button";fb.id="su_b_"+ai+"_fig";
+      fb.setAttribute("aria-label","Not sure you've got them all? Add a rough figure for the rest of the bills paid from "+name);
+      fb.addEventListener("click",function(){s.figOpen[id]=true;suRedraw("su_fig_"+ai)});fl.appendChild(fb);sec.appendChild(fl)}
+    suBillLive(id);if(fig)suFigAsk(id)});
+  suNotEvery(box,s,sc,order);
   box.appendChild(el("p","small muted","Renewal dates, reminders and categories can be added later in Settings › Bills."));
   setupNav(box,{back:true,skip:function(){s.skip[5]=true;enterSpend();goStep(6)},onNext:function(){var bad=[],why={};
     s.accounts.forEach(function(a,ai){var rows=s.bills[a.id]||[];readRows(rows).errors.forEach(function(e){var f=e.f==="months"?rows[e.i].freq:e.f;why[f==="name"?"amount":f]=1;
-      bad.push("su_b_"+ai+"_"+e.i+"_"+(e.f==="name"?"n":e.f==="amount"?"a":"m"))})});
-    if(bad.length)return suFail([why.amount&&"Each bill needs a name and an amount like 42.50.",why.yearly&&"Choose the month each yearly bill is paid in.",why.some&&"Pick at least one month for each bill paid in some months."].filter(Boolean).join(" "),bad);
+      bad.push("su_b_"+ai+"_"+e.i+"_"+(e.f==="name"?"n":e.f==="amount"?"a":"m"))});
+      // 2.14: a rough figure that isn't an amount.
+      if(s.figOpen[a.id]&&!estimateBlock(bc,a.id)){var f=parseMoney(s.figures[a.id],false);if(f.invalid||(!f.empty&&f.value<0)){why.figure=1;bad.push("su_fig_"+ai)}}});
+    if(bad.length)return suFail([why.amount&&"Each bill needs a name and an amount like 42.50.",why.yearly&&"Choose the month each yearly bill is paid in.",why.some&&"Pick at least one month for each bill paid in some months.",why.figure&&"Type the rough figure as an amount a month, like 1500.00."].filter(Boolean).join(" "),bad);
     delete s.skip[5];enterSpend();goStep(6)}})}
+/* 5.3: "Any bills that don't come every month?" at the end of the step, for every household, whether it lists its bills or
+   gives a rough figure. A suggestion adds a row (paid from the usual bills account); each row says the account it's paid
+   from, and changing it moves the row there. */
+function suNotEvery(box,s,sc,order){var c=suCard(box,"su_h_nm","Any bills that don't come every month?"),def=defaultBillAccount(sc)||order[0],all=[];c.id="su_nm";
+  order.forEach(function(id){(s.bills[id]||[]).forEach(function(r,i){if(r.nm)all.push({id:id,i:i,r:r})})});
+  var taken=all.map(function(x){return x.r}),g=el("div","fchips su-chips");g.setAttribute("role","group");g.setAttribute("aria-label","Bills that don't come every month");
+  var focusChips=function(){var b=document.querySelector("#su_nm .su-chips button:not([hidden])")||$("su_next");if(b)try{b.focus({preventScroll:true})}catch(e){}};
+  NM_SUGGESTIONS.forEach(function(x){g.appendChild(suChipBtn(x[0],x[1],function(){var rows=s.bills[def]||(s.bills[def]=[]),r=newBillRow();r.nm=true;r.name=x[1];r.freq=x[2];rows.push(r);
+    var ai=s.accounts.indexOf(suAcct(def));suRedraw("su_b_"+ai+"_"+(rows.length-1)+"_"+(x[2]==="yearly"?"m":"a"))}))});
+  c.appendChild(g);suChipsRefresh(g,taken);
+  if(all.length){var opts=order.map(function(id){return [id,suAcctName(suAcct(id))]}),list=el("div","qa-rows");
+    var hdr=el("div","qa-head");hdr.setAttribute("aria-hidden","true");hdr.appendChild(el("span",null,"Bill name"));hdr.appendChild(el("span",null,"Amount (£)"));c.appendChild(hdr);
+    all.forEach(function(x,n){var ai=s.accounts.indexOf(suAcct(x.id)),bid=function(f){return "su_b_"+ai+"_"+x.i+"_"+f};x.r.account=x.id;
+      list.appendChild(quickRow(x.r,{id:bid,noun:"Bill",n:n+1,group:"Bill that doesn't come every month, "+(n+1)+" of "+all.length,freq:true,acct:opts.length>1?opts:null,acctLabel:"Paid from",acctShown:true,
+        onFreq:function(){suRedraw(bid("f"))},onName:function(){suChipsRefresh(g,taken);suBillLive(x.id)},onAmount:function(){suBillLive(x.id)},
+        onAcct:function(v){var from=s.bills[x.id];from.splice(from.indexOf(x.r),1);var to=s.bills[v]||(s.bills[v]=[]);to.push(x.r);suRedraw("su_b_"+s.accounts.indexOf(suAcct(v))+"_"+(to.length-1)+"_s")},
+        onEnter:function(){var f=$(bid(x.r.freq==="yearly"?"m":"f"));if(f)f.focus()},
+        onRemove:function(){var from=s.bills[x.id];from.splice(from.indexOf(x.r),1);suRedraw();focusChips()}}))});
+    c.appendChild(list)}
+  c.appendChild(el("p","small muted","Not sure of the month? Add it when the renewal letter comes."))}
 
-/* Step 6: spending budgets and savings transfers, kept in or sent from the account that keeps what's left unless changed. */
+/* Step 6: spending budgets and savings transfers. 2.14 (docs/onboarding.md 5.10): drawn by account, as the bills step is
+   ("Kept in Joint account", "Sent from Alex's account"), so a row's account is where it's typed rather than a select. The
+   account shared spending goes to (sharedSpendAccount) is open, with the suggestions; each person's own account, and any
+   other account that keeps what's left, is a line until something is added there. In a household that pays into a joint
+   account, or where one of them pays the bills, each person's own account offers "Alex's spending money". Rows in the
+   shared account follow the answers if they're changed (fixSetupRefs); rows added in another account stay there (picked). */
 function enterSpend(){var s=setup,sc=suCfg(),to=sharedSpendAccount(sc)||suRoot(sc);if(!s.budgets.length)s.budgets.push(newRow(to));if(!s.savings.length)s.savings.push(newRow(to));fixSetupRefs()}
-function suSpend(box,s){var sc=suCfg(),order=flowOrder(sc),opts=order.map(function(id){return [id,(accById(sc,id)||{}).name]}),root=sharedSpendAccount(sc)||suRoot(sc);
+function suSpend(box,s){var sc=suCfg(),order=flowOrder(sc),root=sharedSpendAccount(sc)||suRoot(sc),nm=function(id){return (accById(sc,id)||{}).name||""};
+  var paid=sc.people.map(function(p){return p.payAccount}),roots=rootIds(sc),fun=s.people.length>1&&(s.style==="contribute"||s.style==="housekeeping");
   function list(rows,o){var c=suCard(box,"su_h_"+o.key,o.title,o.intro),rid=function(i,f){return "su_"+o.key+"_"+i+"_"+f};
-    var chips=suChips(c,o.chips,rows,"Common "+o.title.toLowerCase(),function(n){var i=rows.findIndex(function(r){return !rowUsed(r)});if(i<0){rows.push(newRow(root));i=rows.length-1}rows[i].name=n;suRedraw(rid(i,"a"))});
-    var hdr=el("div","qa-head");hdr.setAttribute("aria-hidden","true");hdr.appendChild(el("span",null,"Name"));hdr.appendChild(el("span",null,"A month (£)"));c.appendChild(hdr);
-    var l=el("div","qa-rows");rows.forEach(function(r,i){l.appendChild(quickRow(r,{id:function(f){return rid(i,f)},noun:o.noun,n:i+1,group:o.noun+" "+(i+1),namePh:o.ph,acct:opts,acctLabel:o.acctLabel,acctShown:true,
-      onName:function(){suChipsRefresh(chips,rows)},onAcct:function(){r.picked=true},
-      onEnter:function(){if(i===rows.length-1){var nr=newRow(r.account||root);if(r.picked)nr.picked=true;rows.push(nr);suRedraw(rid(i+1,"n"))}else $(rid(i+1,"n")).focus()},
-      onRemove:function(){rows.splice(i,1);suRedraw(rows.length?rid(Math.min(i,rows.length-1),"n"):"su_add"+o.key)}}))});c.appendChild(l);
-    var add=el("button","linkbtn",o.add);add.id="su_add"+o.key;add.addEventListener("click",function(){rows.push(newRow(root));suRedraw(rid(rows.length-1,"n"))});c.appendChild(add);
+    var chips=suChips(c,o.chips,rows.filter(function(r){return r.account===root}),"Common "+o.title.toLowerCase(),function(n){var i=-1;rows.forEach(function(r,j){if(i<0&&r.account===root&&!rowUsed(r))i=j});
+      if(i<0){rows.push(newRow(root));i=rows.length-1}rows[i].name=n;suRedraw(rid(i,"a"))});
+    order.forEach(function(id){var a=suAcct(id),ai=s.accounts.indexOf(a),name=nm(id),idx=[];rows.forEach(function(r,i){if(r.account===id)idx.push(i)});
+      if(id!==root&&!idx.length&&paid.indexOf(id)<0&&roots.indexOf(id)<0)return;
+      var where=o.where+" "+name,addId="su_add"+o.key+(id===root?"":"_"+ai);
+      // "Alex's spending money": someone's own money to spend, kept in their own account.
+      var own=fun&&o.key==="g"&&id!==root?s.people.filter(function(p,pi){return p.payAccount===id&&!suBoarder(p,pi)}):[];
+      function add(n,f){var r=newRow(id);if(id!==root)r.picked=true;if(n)r.name=n;rows.push(r);suRedraw(rid(rows.length-1,f||"n"))}
+      var addBtn=function(){var b=el("button","linkbtn",o.add);b.type="button";b.id=addId;b.setAttribute("aria-label",o.add.replace(/^\+ /,"")+" "+where.charAt(0).toLowerCase()+where.slice(1));b.addEventListener("click",function(){add()});return b};
+      var ownChips=function(sec,rs){if(!own.length)return null;var g=el("div","fchips su-chips su-ownchips");g.setAttribute("role","group");g.setAttribute("aria-label","Suggestions "+where.charAt(0).toLowerCase()+where.slice(1));
+        own.forEach(function(p){var t=possessive(personName(p,s.people.indexOf(p)))+" spending money";g.appendChild(suChipBtn(t,t,function(){var i=-1;idx.forEach(function(j){if(i<0&&!rowUsed(rows[j]))i=j});
+          if(i<0)add(t,"a");else{rows[i].name=t;suRedraw(rid(i,"a"))}}))});sec.appendChild(g);suChipsRefresh(g,rs);return g};
+      if(id!==root&&!idx.length){var ln=el("div","su-bline su-gline");ln.setAttribute("data-acct",name);ln.setAttribute("data-ai",String(ai));ln.style.setProperty("--c",colourVar(a.colour));ln.appendChild(el("b",null,where));
+        var dash=el("span","muted","—");dash.setAttribute("aria-hidden","true");ln.appendChild(dash);ln.appendChild(addBtn());ownChips(ln,[]);c.appendChild(ln);return}
+      var g=el("div","box su-grp");g.id="su_grp_"+o.key+"_"+ai;g.setAttribute("role","group");g.setAttribute("data-acct",name);g.setAttribute("data-ai",String(ai));g.style.setProperty("--c",colourVar(a.colour));
+      var h=el("h3",null,where);h.id="su_h_"+o.key+"_"+ai;g.setAttribute("aria-labelledby",h.id);g.appendChild(h);
+      var mineRows=idx.map(function(i){return rows[i]}),oc=ownChips(g,mineRows);
+      var hdr=el("div","qa-head");hdr.setAttribute("aria-hidden","true");hdr.appendChild(el("span",null,"Name"));hdr.appendChild(el("span",null,"A month (£)"));g.appendChild(hdr);
+      var l=el("div","qa-rows");idx.forEach(function(i,n){var r=rows[i];l.appendChild(quickRow(r,{id:function(f){return rid(i,f)},noun:o.noun,n:n+1,group:o.noun+" "+(n+1)+", "+where.charAt(0).toLowerCase()+where.slice(1),namePh:o.ph,
+        onName:function(){if(id===root)suChipsRefresh(chips,rows.filter(function(x){return x.account===root}));if(oc)suChipsRefresh(oc,mineRows)},
+        onEnter:function(){if(n===idx.length-1)add();else $(rid(idx[n+1],"n")).focus()},
+        onRemove:function(){rows.splice(i,1);var m2=idx.filter(function(j){return j!==i}).map(function(j){return j>i?j-1:j});suRedraw(m2.length?rid(m2[Math.min(n,m2.length-1)],"n"):addId)}}))});g.appendChild(l);
+      g.appendChild(addBtn());c.appendChild(g)});
     c.appendChild(el("p","small muted",o.after))}
-  list(s.budgets,{key:"g",title:"Spending budgets",noun:"Budget",ph:"e.g. Food shopping",acctLabel:"Kept in",add:"+ Add a budget",chips:BUDGET_SUGGESTIONS,
+  list(s.budgets,{key:"g",title:"Spending budgets",noun:"Budget",ph:"e.g. Food shopping",where:"Kept in",add:"+ Add a budget",chips:BUDGET_SUGGESTIONS,
     intro:"Money set aside each month for everyday spending, like food shopping or fuel. Setting an amount helps day-to-day spending stay clear of your bill money.",
     after:"Not sure how much? Look at what you spent last month and start there. You can adjust it as you go."});
-  list(s.savings,{key:"v",title:"Savings transfers",noun:"Savings transfer",ph:"e.g. Emergency fund",acctLabel:"Sent from",add:"+ Add a savings transfer",chips:SAVINGS_SUGGESTIONS,
+  list(s.savings,{key:"v",title:"Savings transfers",noun:"Savings transfer",ph:"e.g. Emergency fund",where:"Sent from",add:"+ Add a savings transfer",chips:SAVINGS_SUGGESTIONS,
     intro:"Money you move to a savings account each payday, before it gets spent. Even a small amount adds up.",
     after:"Many people start with an emergency fund: money for unexpected costs, like a broken boiler."});
   setupNav(box,{back:true,skip:function(){s.skip[6]=true;goStep(7)},onNext:function(){var bad=[];
@@ -2052,12 +2841,14 @@ function suSpend(box,s){var sc=suCfg(),order=flowOrder(sc),opts=order.map(functi
 /* Step 7: the first payday, worked out from the household finishSetup will save, with each person's usual pay. With a
    payday, the month the next payday pays for (suFirstMonth); without one, the month the app opens on. */
 function suFirstMonth(pc){var nx=nextPayday(pc);return nx?nx.month:defaultMonth(pc)}
-function suPreview(box,s){var c=setupResult(),nx=nextPayday(c.payday),k=suFirstMonth(c.payday),pay={},any=false;
-  c.people.forEach(function(p){pay[p.id]=num(p.usualPay);if(pay[p.id]>0)any=true});
+function suPreview(box,s){var info={},c=setupResult(undefined,info),nx=nextPayday(c.payday),k=suFirstMonth(c.payday),pay={},any=false,pat=hasPatterns(c);
+  // 2.16: the pay the first month plans on (planPay): usual pay, or pay each time × the paydays every month has.
+  var pl=planPay(c,{},k);c.people.forEach(function(p){pay[p.id]=pl[p.id].used;if(pay[p.id]>0)any=true});
   // With no pay at all, the transfers are worked out with a large figure for everyone, just to show their order.
   var big={};c.people.forEach(function(p){big[p.id]=1e6});var r=calc(c,mNum(k),any?pay:big,[]),nm=function(id){var a=accById(c,id);return a?a.name:""};
+  var unl={},said={};c.accounts.forEach(function(a){var x=r.A[a.id];if(x&&x.unlisted>0.004)unl[a.id]=x.unlisted});
   var card=suCard(box,"su_h_first","Transfers to make, in this order");
-  if(nx){var fp=el("p","su-firstday","Your first payday: "+longDate(nx.date)+", for "+mLabel(k)+".");fp.id="su_first";card.appendChild(fp)}
+  if(nx){var fp=el("p","su-firstday",(pat?"Your first transfer day: ":"Your first payday: ")+longDate(nx.date)+", for "+mLabel(k)+".");fp.id="su_first";card.appendChild(fp)}
   if(any||!nx){var lead=el("p",null,nx?"With the pay you entered:":any?"For "+mLabel(k)+", with the pay you entered:":"For "+mLabel(k)+":");lead.id="su_for";card.appendChild(lead)}
   if(!any){var np=el("div","banner","Add pay to see real amounts.");np.id="su_nopay";card.appendChild(np)}
   // 2.13: the preview works from usual pay, so someone without any has no pay of their own (not pay that isn't in yet).
@@ -2065,9 +2856,14 @@ function suPreview(box,s){var c=setupResult(),nx=nextPayday(c.payday),k=suFirstM
     if(missing.length)card.appendChild(el("p","small muted",listAnd(missing)+(missing.length>1?" have":" has")+" no pay of their own, so it counts as £0."))}
   var ol=el("ol","su-tlist");ol.id="su_transfers";
   r.steps.forEach(function(st){var li=el("li"),rt=el("span","r");rt.appendChild(acctTagIn(c,st.from));var ar=el("span","arr","→");ar.setAttribute("aria-hidden","true");rt.appendChild(ar);rt.appendChild(el("span","sr"," to "));
-    if(st.to)rt.appendChild(acctTagIn(c,st.to));else rt.appendChild(el("span","acct",st.toText));li.appendChild(rt);if(any)li.appendChild(moneyEl(Math.abs(st.amt),"v"));ol.appendChild(li)});
+    if(st.to)rt.appendChild(acctTagIn(c,st.to));else rt.appendChild(el("span","acct",st.toText));li.appendChild(rt);if(any)li.appendChild(moneyEl(Math.abs(st.amt),"v"));
+    // 2.14: the first transfer into an account with a rough figure says what's in it that isn't listed yet.
+    if(any&&st.to&&unl[st.to]&&!said[st.to]){said[st.to]=1;var fn=el("span","small muted su-tnote","Includes "+fmt(unl[st.to])+" of bills not listed yet.");fn.id="su_fig_note_"+safeId(st.to);li.appendChild(fn)}ol.appendChild(li)});
   if(!r.steps.length)ol.appendChild(el("li","small muted",r.floats.length>1?"No transfers needed: each account keeps its own money.":"No transfers needed: everything stays in "+nm(c.accounts[0].id)+"."));
   card.appendChild(ol);
+  // An account with a figure that no transfer goes into (pay arrives there): said under the list.
+  if(any)Object.keys(unl).forEach(function(id){if(said[id])return;var p=el("p","small muted",possessive(nm(id))+" bills include "+fmt(unl[id])+" not listed yet.");p.id="su_fig_note_"+safeId(id);card.appendChild(p)});
+  if(info.figureNotes.length){var fns=el("p","small muted",info.figureNotes.join(" "));fns.id="su_fignotes";card.appendChild(fns)}
   if(any){var lf=el("div","su-left"+(r2(r.flt)<0?" neg":""));lf.id="su_left";lf.appendChild(el("span","lbl","Left over"));lf.appendChild(moneyEl(r.flt,"hv"));
     lf.appendChild(el("span","small muted",r.floats.length===1?"in "+nm(r.floats[0].id):listAnd(r.floats.map(function(f){return fmt(f.amt)+" in "+nm(f.id)}))));
     // 2.13: an account short is named as the Pay tab's top card names it ("Joint account is short by £450.00"), even
@@ -2078,8 +2874,12 @@ function suPreview(box,s){var c=setupResult(),nx=nextPayday(c.payday),k=suFirstM
     var setShort=shortBy.some(function(s){var a=accById(c,s.id),f=a&&a.funding;return isObj(f)&&(f.rule==="set"||isObj(f.set))}),shared=c.accounts.some(function(a){return isObj(a.funding)});
     var sb=shortBy.length?el("div","banner bad","You can "+(setShort?"raise the set amounts, ":shared?"change how the shared costs are split, ":"")+"trim a budget or a bill, or carry on and adjust later.")
       :r2(r.flt)<0?el("div","banner bad","That's "+fmt(-r.flt)+" short. You can trim a budget or a bill, or carry on and adjust later."):null;
-    if(sb){sb.id="su_short";card.appendChild(sb)}}
-  var how=suCard(box,"su_h_how","What happens each payday");var hl=el("ol","su-how");
+    if(sb){sb.id="su_short";card.appendChild(sb)}
+    // 2.16: standing orders from each pay that cover these transfers every month.
+    if(pat){var so=standingOrders(c,{},k),sw=[];c.people.forEach(function(p){if(so[p.id])sw=sw.concat(so[p.id].orders.map(orderWords))});
+      if(sw.length){var sp=el("p","small","From your next pay, standing orders of "+listAnd(sw)+" cover these transfers every month. This month, make them as usual.");sp.id="su_so";card.appendChild(sp)}}}
+  var how=suCard(box,"su_h_how","What happens each "+dayWord(c));var hl=el("ol","su-how");
+
   [['<path d="M4 7h16v10H4z"/><path d="M12 10v4M10 12h4"/>',"Type the pay that arrived."],['<path d="M4 7h13l-3-3M20 17H7l3 3"/>',"Make these transfers in your banking app."],
    ['<path d="M5 12.5l4.5 4.5L19 7.5"/>',"Tick each one off in Dovetail. What's left over is yours to spend for the month."]].forEach(function(x){var li=el("li"),ic=el("span","ic");
     ic.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+x[0]+'</svg>';li.appendChild(ic);li.appendChild(el("span",null,x[1]));hl.appendChild(li)});
@@ -2122,7 +2922,7 @@ function miniDiagram(sh,people){var c={accounts:sh.accounts,people:people.map(fu
    preview and by finishSetup. Savings transfers start ("since") in the month the Pay tab first opens on: the next
    payday's month when fromPreview is true (after "Looks right, start"), otherwise the month the app opens on as usual. */
 function setupResult(fromPreview,info){suSyncFunding();var r=setupSettings(setup,cfg,{schema:SCHEMA,version:VERSION,fromPreview:fromPreview});
-  if(info)info.dropped=r.dropped;return r.cfg}
+  if(info){info.dropped=r.dropped;info.figureNotes=r.figureNotes||[]}return r.cfg}
 /* One way out of setup, for "Looks right, start", "Finish later" and "Skip setup for now". After "Looks right, start"
    the Pay tab opens once on the month the preview showed (the next payday's); afterwards, and after Finish later, the
    app opens on defaultMonth as usual. Rows that weren't complete are left out, and a message says so, once the tour
@@ -2135,7 +2935,8 @@ function finishSetup(fromPreview){var info={};if(setup&&setup.change)return; // 
   try{history.replaceState(null,"","#pay")}catch(e){}monthKey=fromPreview===true?suFirstMonth(payCfg()):defaultMonth(payCfg());route();goMonth(monthKey);
   queueNativeBackup(0);
   // A new household gets the tour straight away (it says what to do next, so no "All set" message).
-  var note=info.dropped?droppedText(info.dropped):null;
+  // 2.14: a rough figure that wasn't kept (already covered by the bills listed, or not offered with this split) says so.
+  var note=[info.dropped?droppedText(info.dropped):null].concat(info.figureNotes||[]).filter(Boolean).join(" ")||null;
   if(cfg.tourDone===false){setupNote=note;startTour()}else toast(note||(cfg.bills.length?"All set. "+plural(cfg.bills.length,"bill")+" added.":"All set."))}
 /* A made-up household for exploring. Flagged as an example: never backed up, and "Set up my own household" wipes it.
    It comes with three saved months, a renewal and a one-off next month, so every Analysis section has something to show. */
@@ -2176,18 +2977,22 @@ var HELP={
 function helpBtn(key){var h=HELP[key],b=el("button","helpq");b.type="button";b.setAttribute("aria-label",h.ask);b.setAttribute("aria-haspopup","dialog");b.setAttribute("data-help",key);
   var q=el("span",null,"?");q.setAttribute("aria-hidden","true");b.appendChild(q);b.addEventListener("click",function(){openHelp(key,b)});return b}
 function openHelp(key,from){var h=HELP[key];openSheet(h.title,h.body(),from,{key:key,describe:true})}
-var sheetOpen=false,sheetFrom=null,sheetSkip=false,sheetHist=false,sheetRefocus=null;
+var sheetOpen=false,sheetFrom=null,sheetSkip=false,sheetHist=false,sheetRefocus=null,sheetOnClose=null;
 /* Everything behind a sheet or the tour: unreachable by touch, keyboard and screen reader while it's open. */
 function setInert(on){["main","tabbar"].forEach(function(id){var n=$(id);if(on)n.setAttribute("inert","");else n.removeAttribute("inert")})}
 function openSheet(title,nodes,from,o){o=o||{};var sh=$("sheet"),b=clear($("sheetB"));$("sheetH").textContent=title;
   nodes.forEach(function(n){b.appendChild(typeof n==="string"?el("p",null,n):n)});
   if(o.describe)sh.setAttribute("aria-describedby","sheetB");else sh.removeAttribute("aria-describedby");
   sheetFrom={el:from||null,key:o.key||null,id:(from&&from.id)||null};$("sheetClose").className="btn"+(o.quietClose?" ghost":"");
+  // 2.16: o.onClose runs when the sheet closes, however it's closed, before focus goes back.
+  sheetOnClose=o.onClose||null;
   if(!sheetOpen){sheetOpen=true;hideUndo();setInert(true);$("sheetWrap").hidden=false;
     // An entry in the history, so the phone's Back button closes the sheet rather than leaving the screen.
     try{history.pushState(Object.assign({},history.state||{},{sheet:true}),"");sheetHist=true}catch(e){sheetHist=false}}
   sh.scrollTop=0;try{$("sheetH").focus({preventScroll:true})}catch(e){}}
 function closeSheet(fromBack){if(!sheetOpen)return;sheetOpen=false;$("sheetWrap").hidden=true;setInert(false);
+  var oc=sheetOnClose;sheetOnClose=null;if(oc)oc();
+
   if(sheetHist&&!fromBack){sheetSkip=true;setTimeout(function(){sheetSkip=false},1000);try{history.back()}catch(e){sheetSkip=false}}sheetHist=false;
   var f=sheetFrom||{},shown=function(n){return n&&n.isConnected&&n.getClientRects().length?n:null};sheetFrom=null;
   var t=shown(f.el)||(f.key&&shown(document.querySelector('[data-help="'+f.key+'"]')))||(f.id&&shown($(f.id)));if(t)try{t.focus({preventScroll:true})}catch(e){}
@@ -2221,18 +3026,27 @@ function openHow(from){var r=lastR,n=[];
   n.push("Left over is what's left once every bill, spending budget and savings transfer is covered. It stays in the account that keeps what's left.");
   if(r&&r.totalIn>0.004)n.push(fig(r2(r.flt)<0?mLabel(monthKey)+" is "+fmt(-r.flt)+" short.":mLabel(monthKey)+": "+fmt(r.flt)+" left over."));
   n.push(el("h3",null,"Pay months"));
-  n.push("A pay month runs from one payday to the next. It's named after the month that pay is for.");
+  n.push("A pay month runs from one transfer day to the next. It's named after the month that pay is for.");
   n.push("Once a month has been saved, a change to a bill, budget or savings transfer applies from this pay month. Earlier months keep what they had.");
+  // 2.14: the rough figure, in one line.
+  n.push("An account can have a rough figure for its bills instead of every bill listed: Dovetail counts the figure until the bills you list go past it, so listing a bill within it doesn't change your transfers.");
+  // 2.16: pay that isn't monthly, standing orders from each pay, and other income every four weeks (one text for everyone).
+  n.push(el("h3",null,"Pay that isn't monthly"));
+  n.push("Paid every week, two weeks or four weeks? Choose it in Settings › People. Each month, type everything that's arrived since your last transfer day. If one more payday came than usual, tap 'Had an extra payday?': it's set aside, out of the transfers, unless you count it. Settings › People shows standing orders that cover every month.");
+  n.push("A standing order from each pay covers the largest month in the next year, so some months it sends a little more than needed and the extra builds up as a buffer. Once the buffer's there, you can lower it to the month's amount × 12 ÷ 52 (weekly) or × 12 ÷ 26 (every two weeks).");
+  n.push("Child Benefit or another payment every four weeks? Add it as other income, using one payment as the amount a month: in the month with two, you'll have a bit more.");
   openSheet("How Dovetail works",n,from)}
 var WORDS=[["Take-home pay","The pay that actually reaches your bank account, after tax, National Insurance and pension. Also called net pay."],
-  ["Pay month","The month your pay is for. It runs from one payday to the next."],
+  ["Pay month","The month your pay is for. It runs from one transfer day to the next."],
+  ["Transfer day","The day each month you make the transfers. For most people it's payday. If you're paid every week, two weeks or four weeks, it's a day you choose, and the pay that's arrived since the last one counts."],
   ["Transfer","Money you move from one of your accounts to another, in your banking app."],
   ["Left over","What's left once every bill, spending budget and savings transfer is covered. It's yours to spend for the month."],
   ["One-off","Money that goes out or comes in just once, like a car repair or a refund."],
   ["Share","What each person pays into an account you pay for together. It might be half each, in proportion to pay, so you each keep the same, or a set amount."],
-  ["Board","Money someone living with you pays towards the household each month. They keep the rest of their pay, so it isn't counted in what the household has left."],
+  ["Board","Money someone living with you, like a grown-up child at home, pays towards the household each month. It's also called keep. The rest of their pay stays theirs, so it isn't counted in what the household has left."],
   ["Spending budget","Money set aside each month for everyday spending, like food shopping or fuel."],
   ["Savings transfer","Money you move to savings each payday, before it gets spent."],
+  ["Rough figure (bills)","A rough amount for what goes out of an account in bills each month, for when you haven't listed every bill. What it has over the bills you've listed is shown as not listed yet."],
   ["Direct Debit","A regular payment a company takes from your account, with your permission. Shown as DD on a bank statement."],
   ["Standing Order","A regular payment of a fixed amount that you set up yourself. Shown as SO on a bank statement."],
   ["Renewal","When a contract or policy, like insurance or a phone contract, ends and starts again, often at a new price."],
@@ -2253,7 +3067,8 @@ var TOUR=[
     if(r.totalIn<=0.004)return "After every bill, budget and savings transfer, this is what's left for the month. Add your pay to see it.";
     return (r2(r.flt)<0?"This month is "+fmt(-r.flt)+" short: more is going out than coming in. You can fix it by changing a budget or a bill.":"After every bill, budget and savings transfer, this is what's left for the month: "+fmt(r.flt)+".")+
       (personKeeps(monthCfg(),r).length?" Under it is what each of you keeps in your own account.":"")}},
-  {id:"pay",target:"#payCard",tab:"pay",title:"Type your pay each payday",text:"When pay arrives, type what actually reached your bank. Until then, Dovetail uses your last typed pay, or your usual pay."},
+  {id:"pay",target:"#payCard",tab:"pay",title:"Type your pay",text:"When pay arrives, type what actually reached your bank since you last made the transfers. Until then, Dovetail uses an estimate."},
+
   {id:"transfers",target:"#trSec",tab:"pay",title:"Then make these transfers",text:function(r){return r.steps.length?"These are the payments to make in your banking app, in this order, so every bill is covered. Tick each one off when it's done."+
     (r.steps.some(function(x){return x.kind==="contribute"})?" Each person's share comes first.":"")+(cfg.people.length>1?" Share sends the list to "+(cfg.people.length===2?"the other person":"everyone else")+(sendsUpdate()?", or a file that brings Dovetail on their phone up to date.":"."):""):
     "When money needs to move between your accounts, the transfers show here, in order. Tick each one off when it's done."}},

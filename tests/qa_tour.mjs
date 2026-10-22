@@ -77,8 +77,8 @@ await walkSetup(p, 4, true); await p.click('#su_later'); await p.waitForTimeout(
 check('"Finish later" starts the tour too', await shown(p) && (await stopId(p)) === 'month');
 check('No "Not every month" bills: that stop is left out and the count says 8', (await T(p, '#tourN')) === '1 of 8');
 await p.click('#tourNext'); await p.click('#tourNext'); await p.waitForTimeout(80);
-check('Next, Next: stop 3, take-home pay', (await stopId(p)) === 'pay' && (await T(p, '#tourN')) === '3 of 8' && (await T(p, '#tourH')) === 'Type your pay each payday');
-check('…saying what Dovetail uses until then: the last typed pay, or the usual pay (as payEstimate does)', (await T(p, '#tourT')) === 'When pay arrives, type what actually reached your bank. Until then, Dovetail uses your last typed pay, or your usual pay.', await T(p, '#tourT'));
+check('Next, Next: stop 3, take-home pay', (await stopId(p)) === 'pay' && (await T(p, '#tourN')) === '3 of 8' && (await T(p, '#tourH')) === 'Type your pay');
+check('…saying what to type and that Dovetail uses an estimate until then (2.16: one text for every household)', (await T(p, '#tourT')) === 'When pay arrives, type what actually reached your bank since you last made the transfers. Until then, Dovetail uses an estimate.', await T(p, '#tourT'));
 await p.click('#tourBack'); await p.waitForTimeout(80);
 check('Back: stop 2, the hero, focus on its title', (await stopId(p)) === 'hero' && (await focusId(p)) === 'tourH');
 check('…and the hero moved its description over (the month bar\'s is gone)', (await p.getAttribute('#hero', 'aria-describedby')) === 'tourT' && (await p.getAttribute('#monthBar', 'aria-describedby')) === null);
@@ -228,7 +228,7 @@ check('Closing went back in history too: no sheet entry left behind', (await p.e
 await p.click('#t-settings'); await p.click('#sHelp summary'); await p.click('#helpHow'); await p.waitForTimeout(150);
 check('"How Dovetail works": the routine, the flow of money with the household\'s own diagram, left over and pay months', (await T(p, '#sheetH')) === 'How Dovetail works' &&
   (await p.$$eval('#sheetB .how li', l => l.map(x => x.textContent))).length === 3 && (await p.$$('#sheetB .fd li')).length === 4 && (await p.getAttribute('#sheetB .fd', 'aria-labelledby')) === 'howFlowH' &&
-  (await T(p, '#sheetB')).includes('What left over means') && (await T(p, '#sheetB')).includes('A pay month runs from one payday to the next'));
+  (await T(p, '#sheetB')).includes('What left over means') && (await T(p, '#sheetB')).includes('A pay month runs from one transfer day to the next'));
 check('2.13: …and own accounts that pay shares in, board, and changes from this pay month',
   (await T(p, '#sheetB')).includes("your own account keeps what's left of your pay after your share") && (await T(p, '#sheetB')).includes('Someone who pays board pays a set amount') && (await T(p, '#sheetB')).includes('a change to a bill, budget or savings transfer applies from this pay month'), await T(p, '#sheetB'));
 const ax2 = await axe(p); check('Accessibility of "How Dovetail works"', ax2.length === 0, ax2.join(' | '));
@@ -237,8 +237,9 @@ check('…closing it returns focus to its button', (await focusId(p)) === 'helpH
 await p.click('#helpWords'); await p.waitForTimeout(150);
 const terms = await p.$$eval('#sheetB dt', d => d.map(x => x.textContent));
 // 2.13: Board, after Share.
-check('"Words Dovetail uses": a glossary of the thirteen words', JSON.stringify(terms) === JSON.stringify(['Take-home pay', 'Pay month', 'Transfer', 'Left over', 'One-off', 'Share', 'Board', 'Spending budget', 'Savings transfer', 'Direct Debit', 'Standing Order', 'Renewal', 'Tax year']), terms.join(','));
-check('…in short sentences (none over about 20 words)', await p.$$eval('#sheetB dd', d => d.every(x => x.textContent.split(/(?<=\.)\s+/).every(s => s.split(/\s+/).length <= 21))));
+check('"Words Dovetail uses": a glossary of the fifteen words (2.14: rough figure; 2.16: transfer day)', JSON.stringify(terms) === JSON.stringify(['Take-home pay', 'Pay month', 'Transfer day', 'Transfer', 'Left over', 'One-off', 'Share', 'Board', 'Spending budget', 'Savings transfer', 'Rough figure (bills)', 'Direct Debit', 'Standing Order', 'Renewal', 'Tax year']), terms.join(','));
+// 2.16: "Transfer day" is Appendix A's wording, whose last sentence runs to 25 words; the rest stay short.
+check('…in short sentences (none over about 20 words, but Appendix A\'s "Transfer day")', await p.$$eval('#sheetB dd', d => d.filter(x => x.previousElementSibling.textContent !== 'Transfer day').every(x => x.textContent.split(/(?<=\.)\s+/).every(s => s.split(/\s+/).length <= 21))));
 await p.keyboard.press('Escape'); await p.waitForTimeout(100);
 check('No JS errors (help)', p.errs.length === 0, p.errs.join(' | '));
 await ctx.close();

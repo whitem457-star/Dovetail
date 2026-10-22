@@ -158,7 +158,8 @@ export const SETUP_FILL = {
   4: async p => { if (await p.$('#su_style_pool')) await p.check('#su_style_pool'); await p.check('#su_shape_split'); },
   5: async p => { const chip = (sec, n) => p.click(`section[aria-labelledby=${sec}] .su-chips button:has-text("${n}")`);
     await chip('su_h_b2', 'Mortgage'); await p.fill('#su_b_2_0_a', '925'); await chip('su_h_b2', 'Council Tax'); await p.fill('#su_b_2_1_a', '168');
-    await chip('su_h_b2', 'Car insurance'); await p.selectOption('#su_b_2_2_m', '3'); await p.fill('#su_b_2_2_a', '420');
+    // 2.14: suggestions are grouped; car insurance is under Transport.
+    await p.click('#su_b_2_g_transport'); await chip('su_h_b2', 'Car insurance'); await p.selectOption('#su_b_2_2_m', '3'); await p.fill('#su_b_2_2_a', '420');
     await p.click('#su_b_0_open'); await p.fill('#su_b_0_0_n', 'Mobile phone'); await p.fill('#su_b_0_0_a', '18'); },
   6: async p => { await p.click('section[aria-labelledby=su_h_g] .su-chips button:has-text("Food shopping")'); await p.fill('#su_g_0_a', '520');
     await p.click('section[aria-labelledby=su_h_v] .su-chips button:has-text("Emergency fund")'); await p.fill('#su_v_0_a', '100'); },

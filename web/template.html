@@ -303,6 +303,10 @@ fieldset.seg{border:0;margin:0;padding:0;min-width:0}
 .payrow .hint{grid-column:2 / -1;min-height:0}
 .payrow .hint:empty{display:none}
 .payrow .money input{text-align:right;padding:10px 0}
+/* 2.16: under the pay of someone paid weekly, every two or four weeks: the extra payday and the standing-order notice. */
+.payrow>.payx{grid-column:1 / -1;display:flex;flex-direction:column;gap:8px;min-width:0}
+.payrow>.payx:empty{display:none}
+.payx .linkbtn{min-height:44px}
 .trsec{display:flex;flex-direction:column;gap:10px}
 .sech{padding:0 4px}
 .nm .row.lined{align-items:center}
@@ -334,6 +338,45 @@ fieldset.seg{border:0;margin:0;padding:0;min-width:0}
 .su-restore-in{display:flex;flex-direction:column;gap:12px;padding:14px 0 4px}
 .su-links{display:flex;flex-wrap:wrap;justify-content:center;gap:0 24px}
 .su-links .linkbtn,.su-alone{min-height:44px}
+/* 2.18: the welcome (docs/welcome.md): brand line, a larger headline, a picture of a finished payday, the trust line and
+   a note under the buttons. Sizes in rem so larger text scales them; colours from the tokens only. */
+#setup.su-wel{gap:12px}
+.su-wel .su-head{gap:6px}
+.su-brand{display:flex;align-items:center;gap:8px;font:700 1rem/1.2 var(--f-display);color:var(--ink)}
+.su-wel h1#suTitle{font-size:1.75rem;line-height:1.1;letter-spacing:-.015em}
+.su-wel .su-lead{font-size:.9375rem}
+.su-pic{margin:0;display:flex;flex-direction:column;gap:6px}
+.su-pic figcaption{font-size:.75rem;text-align:center}
+/* A raised card with a second one peeking out behind it, tilted */
+.su-pic-stack{position:relative;padding:2px 4px 6px}
+.su-pic-stack::before{content:"";position:absolute;inset:10px 10px -2px;border-radius:22px;background:var(--surface);opacity:.7;transform:rotate(-3deg);box-shadow:var(--shadow)}
+.su-pic-card{position:relative;background:var(--surface);border-radius:22px;padding:10px 12px 12px;box-shadow:var(--shadow)}
+.su-pic-pay{display:flex;align-items:center;gap:7px;padding:2px 2px 8px;border-bottom:1px solid var(--hair);font-size:.8125rem;font-weight:600;color:var(--muted)}
+.su-pic-pl{flex:1;min-width:0}
+.su-pic-amt{font:700 1.125rem/1 var(--f-display);color:var(--ink);font-variant-numeric:tabular-nums;letter-spacing:-.01em;white-space:nowrap}
+.su-pic-list{list-style:none;margin:0;padding:0}
+.su-pic-tr{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:5px 10px;align-items:center;padding:6px 2px;border-bottom:1px solid var(--hair)}
+.su-pic-n{width:1.5rem;height:1.5rem;border-radius:50%;border:2px solid var(--ctl);display:grid;place-items:center;font:700 .75rem/1 var(--f-body);color:var(--ink)}
+.su-pic-route{display:flex;flex-wrap:wrap;align-items:center;gap:2px 5px;min-width:0;font-size:.8125rem;color:var(--muted)}
+.su-pic-route b{color:var(--ink);font-weight:600}
+.su-pic-chips{grid-column:2 / 4;display:flex;flex-wrap:wrap;gap:4px}
+.su-pic-chip{display:inline-flex;align-items:center;gap:3px;border-radius:999px;padding:2px 6px 2px 8px;background:var(--sunk);color:var(--ink);font-size:.6875rem;font-weight:600}
+.su-pic-chip.more{color:var(--muted);padding-right:8px}
+.su-pic-chip svg,.su-pic-cov svg{width:.75rem;height:.75rem;fill:none;stroke:var(--accent);stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.su-pic-hero{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:4px 12px;margin-top:6px;padding:8px 12px;border-radius:16px;background:var(--accent-soft)}
+.su-pic-hv{grid-row:1 / 3;font:700 2.125rem/1 var(--f-display);letter-spacing:-.02em;font-variant-numeric:tabular-nums;color:var(--ink)}
+.su-pic-ht{align-self:end;font-size:.875rem;line-height:1.2;font-weight:500;color:var(--ink)}
+.su-pic-ht b{color:var(--accent)}
+.su-pic-cov{justify-self:start;align-self:start;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;border-radius:999px;padding:3px 9px 3px 6px;background:var(--surface);color:var(--accent);font-size:.75rem;font-weight:700}
+/* 320px with larger text: the pill takes its own line under the figure and its words */
+@media (max-width:359px){html[data-text="large"] .su-pic-hv{grid-row:auto;font-size:1.875rem} html[data-text="large"] .su-pic-cov{grid-column:1 / -1}}
+/* In dark the shadow token is none: the cards get a hairline edge instead */
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .su-pic-card{box-shadow:0 0 0 1px var(--line)} :root:not([data-theme="light"]) .su-pic-stack::before{box-shadow:0 0 0 1px var(--hair)}}
+:root[data-theme="dark"] .su-pic-card{box-shadow:0 0 0 1px var(--line)} :root[data-theme="dark"] .su-pic-stack::before{box-shadow:0 0 0 1px var(--hair)}
+.su-trust{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;justify-content:center;gap:4px 14px;font-size:.8125rem;font-weight:600;color:var(--ink)}
+.su-trust li{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.su-trust svg{width:1rem;height:1rem;flex:none;fill:none;stroke:var(--accent);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+#setup .su-note{font-size:.75rem;color:var(--muted);text-align:center;text-wrap:balance;margin-top:-8px}
 .su-nav{justify-content:space-between}.su-nav .btn{flex:1 1 8rem;min-height:48px}
 .su-pair{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}
 @media (max-width:399px){.su-pair{grid-template-columns:minmax(0,1fr)}}
@@ -405,7 +448,8 @@ fieldset.su-q legend{font-size:.875rem;color:var(--ink);margin-bottom:8px}
 .qa-row .qa-full{grid-column:1 / -1}
 .qa-full.bad .mbtn{border-color:var(--bad)}.qa-full.bad .lbl{color:var(--bad)}
 .su-tlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
-.su-tlist li{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--hair)}
+.su-tlist li{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:4px 10px;padding:9px 0;border-bottom:1px solid var(--hair)}
+.su-tlist .su-tnote{flex-basis:100%}
 .su-tlist li:last-child{border-bottom:0}
 .su-tlist .r{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;min-width:0;font-size:.875rem}
 .su-tlist .r .acct{overflow-wrap:anywhere;min-width:0}.su-tlist .arr{color:var(--muted)}
@@ -478,9 +522,54 @@ fieldset.su-q legend{font-size:.875rem;color:var(--ink);margin-bottom:8px}
 .su-bline{display:flex;flex-wrap:wrap;align-items:center;gap:0 6px;border-left:5px solid var(--c);background:var(--surface);border-radius:var(--r-in);box-shadow:var(--shadow);padding:2px 12px;min-width:0}
 .su-bline b{font-weight:600;overflow-wrap:anywhere;min-width:0}
 .su-bline .linkbtn{min-height:44px}
-/* The Dovetail mark (2.11): on the first setup screen and in Settings › About. */
+/* 2.14: the bills step's links, the rough figure, grouped suggestions, the running total, the paste box and the budgets
+   and savings drawn by account. */
+.su-toplinks{display:flex;flex-wrap:wrap;align-items:center;gap:0 18px}
+.su-toplinks .linkbtn,.su-find,.su-figlink .linkbtn{min-height:44px}
+.su-figlink{margin:0}
+.su-figlink .linkbtn{padding:0;display:inline}
+.su-fig{gap:8px}
+.su-figq{font-weight:700;font-size:.9375rem}
+.su-fig p{margin:0}
+.su-fignote{color:var(--due);font-weight:600}
+.su-figbtns{align-items:center}
+.su-figbtns .linkbtn{min-height:44px}
+.su-big,.su-chiplbl{margin:0}
+.su-chiplbl{font-weight:700}
+.su-more{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.su-more .fchip{color:var(--ink);min-height:36px}
+.fchip.su-cgrp::after{content:"";display:inline-block;width:.38em;height:.38em;margin-left:.5em;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:translateY(-.15em) rotate(45deg);opacity:.6}
+.fchip.su-cgrp[aria-expanded="true"]{background:var(--accent-soft);border-color:var(--accent)}
+.fchip.su-cgrp[aria-expanded="true"]::after{transform:translateY(.1em) rotate(-135deg)}
+.su-total{margin:0;font-weight:600;font-variant-numeric:tabular-nums}
+.su-bline .su-linechips{flex-basis:100%;padding:0 0 10px}
+.su-nobills{margin-left:2px}
+.su-paste textarea.inp{min-height:7.5rem}
+.su-pastesum{margin:0;font-weight:700}
+.su-pastewhy{margin:0;color:var(--due);font-weight:600}
+.su-unreadh{margin:0;font-weight:600}
+.su-unread{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px;overflow-wrap:anywhere}
+.su-raw{font-family:ui-monospace,monospace}
+.su-grp{border-left:5px solid var(--c);gap:8px}
+.su-grp>h3{margin:0}
+.su-gline{margin-top:-2px}
+/* 2.14: a rough figure after setup: its line and bar (Bills by account, Settings › Bills), and Settings' box for it. */
+.figsum{display:flex;flex-direction:column;gap:4px}
+.figsum p{margin:0;color:var(--ink);font-weight:600}
+.figbar{height:6px;border-radius:999px;background:var(--ring);overflow:hidden}
+.figbar>i{display:block;height:100%;background:var(--accent);border-radius:999px}
+.figbox{display:flex;flex-direction:column;gap:8px;background:var(--sunk);border-radius:var(--r-in);padding:12px}
+.figbox p{margin:0}
+.figbox .btn.ghost{background:var(--surface)}
+.figbox .banner .linkbtn{min-height:44px}
+.figedit{display:flex;flex-direction:column;gap:8px}
+.figadd{min-height:44px;font-size:.8125rem}
+.catrow.figrow{cursor:default}
+.catrow .track>i.hatch{background:repeating-linear-gradient(45deg,var(--viz-1) 0 2px,transparent 2px 6px);box-shadow:inset 0 0 0 1.5px var(--viz-1);position:relative}
+.catrow .track>i.hatch::before{content:"";position:absolute;inset:0;background:var(--viz-1);opacity:.22}
+/* The Dovetail mark (2.11): on the first setup screen (2.18: small, in the brand line) and in Settings › About. */
 .mark{display:block;flex:none;aspect-ratio:46/52;height:auto}
-.su-mark{width:3rem}
+.su-mark{width:1.375rem}
 .about-brand{display:flex;align-items:center;gap:10px;color:var(--ink)}
 .about-brand .mark{width:2rem}
 .about-brand b{font:700 1.25rem/1 var(--f-display);letter-spacing:-.01em}
@@ -536,6 +625,7 @@ html[data-text="large"] .fund-row{grid-template-columns:minmax(0,1fr)}
       <div id="warnings" style="display:flex;flex-direction:column;gap:8px"></div>
       <ol class="steps" id="steps"></ol>
       <p class="nmnote" id="nmNote" hidden></p>
+      <p class="nmnote" id="figNote" hidden></p>
     </section>
 
     <!-- The rest of the month, closed until opened (for this session only). -->

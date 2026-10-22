@@ -16,7 +16,7 @@ function mdTable(head,rows){if(!rows.length)return "_None._\n";
 function accountName(c,id){var a=accById(c,id);return a?(a.name||"Unnamed account"):"(missing account)"}
 function paydayText(pc){pc=pc||{};if(!pc.day)return "not set";
   if(pc.day==="last")return "the last working day of the month";
-  return ordinal(Number(pc.day))+" of the month"+(pc.weekend!==false?" (the Friday before if it falls on a weekend)":"")}
+  return ordinal(Number(pc.day))+" of the month"+(pc.weekend!==false?" (the working day before if it falls on a weekend or an England and Wales bank holiday)":"")}
 /* Months with anything saved in them (typed pay, ticks or one-offs), oldest first: the months the exports list. A month
    whose key isn't a real month ("2026-13", which a restore reports and keeps) is left out, as the calculations leave it. */
 function savedMonthKeys(months){return Object.keys(months).filter(function(k){var d=months[k];return validMonth(k)&&d&&typeof d==="object"&&
@@ -24,13 +24,22 @@ function savedMonthKeys(months){return Object.keys(months).filter(function(k){va
 /* One saved month as figures: each person's typed pay (null if not typed, or only estimated: payIsTyped), the float, ticks
    done of the transfers, one-offs. 2.13: what people paid into accounts they share that month (shares: [{person, to,
    amt, share, split, set, board}], under the month's own arrangement; split as shareSplit words it) and its short accounts (shortBy, named as in
-   projectedFloat). */
+   projectedFloat). 2.14: unlisted, the bills not listed yet of any rough figure that month. */
 function savedMonthRow(c,months,k){var d=months[k]||{},ones=monthOneOffs(months,k),mc=cfgFor(c,k,ones),r=calcMonth(c,months,k),done=d.done||{},out=boarderAccounts(mc);
   var ticked=r.steps.filter(function(s){return done[s.id]!=null&&done[s.id]!==false}).length;
   var shares=r.steps.filter(function(s){return s.kind==="contribute"}).map(function(s){return {person:s.person,to:s.to,amt:s.amt,share:s.share,split:s.set?null:shareSplit(r,s),set:!!s.set,board:!!out[s.from]&&!out[s.to]}});
-  return {k:k,pay:c.people.map(function(p){return payIsTyped(d,p.id)?num(d.pay[p.id]):null}),float:r.flt,ticked:ticked,steps:r.steps.length,
+  var row={k:k,pay:c.people.map(function(p){return payIsTyped(d,p.id)?num(d.pay[p.id]):null}),float:r.flt,ticked:ticked,steps:r.steps.length,
     oneOffs:ones,oneOut:sum(ones.filter(function(o){return o&&o.kind!=="in"}),function(o){return num(o.amount)}),oneIn:sum(ones.filter(function(o){return o&&o.kind==="in"}),function(o){return num(o.amount)}),
-    shares:shares,shortBy:shortAccounts(r),named:shortNamed(r)}}
+    shares:shares,shortBy:shortAccounts(r),named:shortNamed(r),unlisted:r.unlisted},ever=patternsEver(c);
+  // 2.16, for a household with a pattern (now or earlier) only: per person (as pay), the pay used and the amount set
+  // aside (null when pay wasn't typed), and the extra paydays [{person, amount, counted}] of people whose pay was typed.
+  if(ever){var pl=planPay(c,months,k),ty=function(p){return payIsTyped(d,p.id)};
+    row.used=c.people.map(function(p){return ty(p)?pl[p.id].used:null});row.setAside=c.people.map(function(p){return ty(p)?pl[p.id].setAside:null});
+    row.extra=c.people.filter(function(p){var x=isObj(d.extra)&&d.extra[p.id];return ty(p)&&pl[p.id].kind==="pattern"&&isObj(x)}).map(function(p){var x=d.extra[p.id],o={person:p.id,amount:num(x.amount),counted:x.counted===true};
+      // 2.17 (L16): a line the count opened, marked "Not an extra payday" (edited, £0), says so (extraState's not); a line
+      // opened from "Had an extra payday?" at £0 keeps 2.16's words.
+      var xs=extraState(c,months,k,p.id,d);if(xs&&xs.not)o.not=true;return o})}
+  return row}
 /* 2.13: what the report needs to explain beyond pooling: shares (an account paid for by people, now or in an earlier
    arrangement) and board (someone paying board, now or earlier). */
 function householdUses(c){var was=arr(c.flows).map(function(e){return (e&&e.was)||{}});
@@ -40,6 +49,11 @@ function householdUses(c){var was=arr(c.flows).map(function(e){return (e&&e.was)
 /* A share in words for the report, in the Pay tab's words (contribWords): "Alex 700.00 into Joint account (share, half
    each)", "Alex 580.00 into Joint account (share, 58%)", "Kit 350.00 into Joint account (board)". */
 function shareWords(c,s){var p=personById(c,s.person);return ((p&&String(p.name||"").trim())||"Someone")+" "+n2(s.amt)+" into "+accountName(c,s.to)+" ("+(s.board?"board":s.set?"set amount":s.split==="equal"?"equal share":"share, "+s.split)+")"}
+/* 2.14: each account's rough figure (the settings as they are now), for the bills table and the CSV: [{account, name,
+   figure, unlisted}] in account order. "Rough figure for Joint's bills (1500.00): not listed yet", and the amount is
+   what's not listed yet, which counts as a bill every month (the listed bills are in the table already). */
+function figureRows(c){var est=estimateTotals(c);return c.accounts.filter(function(a){return est[a.id]}).map(function(a){var e=est[a.id];
+  return {account:a.id,name:"Rough figure for "+possessive(a.name||"Unnamed account")+" bills ("+n2(e.figure)+"): not listed yet",figure:e.figure,unlisted:e.unlisted}})}
 /* Who pays into each account paid for by people (the current arrangement), for the report: [[account, person, how]]. */
 function paysIntoRows(c){var out=boarderAccounts(c),rows=[];
   c.accounts.forEach(function(a){var f=a.funding;if(!isObj(f))return;var ppl=fundingPeople(c,a.id),set=isObj(f.set)?f.set:{},shared=ppl.filter(function(p){return !set[p.id]&&f.rule!=="set"});
@@ -56,7 +70,7 @@ function exportMarkdown(c,months,today,o){o=o||{};var k=defaultMonth(c.payday,to
   function h(t){L.push("","## "+t,"")}
   L.push("# Dovetail export, "+fmtDate(today),"");
   // 2.13: the adopted description of what Dovetail is for: one sentence on the job, one on what it doesn't do.
-  L.push("This is an export from Dovetail, an offline app for households that run their money across more than one bank account: each payday it works out which transfers to make between the accounts, in what order, so every bill, spending budget and savings transfer is covered, what each person pays into anything they share, and what's left over. It doesn't connect to banks or the internet, track what is actually spent, move money or give financial advice: everything below was typed into the app or is calculated from what was typed. Amounts are in pounds (GBP).","");
+  L.push("This is an export from Dovetail, an offline app for households that run their money across more than one bank account: each "+dayWord(c)+" it works out which transfers to make between the accounts, in what order, so every bill, spending budget and savings transfer is covered, what each person pays into anything they share, and what's left over. It doesn't connect to banks or the internet, track what is actually spent, move money or give financial advice: everything below was typed into the app or is calculated from what was typed. Amounts are in pounds (GBP).","");
   L.push("How Dovetail's figures work:","",
     "- **People** are paid into an account. Their take-home pay is typed in each month from payslips; until it is, the app uses their last typed pay, or their usual pay.",
     "- **Accounts** each have a \"leftover goes to\" account. After an account's own bills, spending budgets and savings transfers are covered, whatever is left moves to that account. If an account can't cover its own outgoings, the account it sends to tops it up. An account that keeps its leftover holds the **float**: what's left once everything is covered.",
@@ -75,11 +89,19 @@ function exportMarkdown(c,months,today,o){o=o||{};var k=defaultMonth(c.payday,to
   if(uses.board)L.push("- **Board**: someone who pays board pays a set amount into the household's account and keeps the rest of their pay in their own account. That account is their own money, so it isn't in the household's figures or its float, and their board counts as money coming in.");
   if(uses.shares||uses.board||shortAny)L.push("- **Short**: a month is short when any account that keeps its leftover ends it below zero, even when the float in total is more than zero. Where more than one account keeps its leftover, the figures below name each short account and by how much.");
   if(uses.shares||shortAny)L.push("- **Top-ups** only send what the account sending them has by then, so a top-up can be made only in part, or not at all; the rest stays short.");
+  var figs=figureRows(c);
+  if(figs.length)L.push("- **Rough figures**: this household has bills not listed yet. An account can have a rough figure for its bills instead of every bill being listed. Bills that come in 7 or more months a year count within it, and what the figure has over them is \"not listed yet\", which counts as a bill every month (the \"Rough figure\" rows in the bills table). Bills that come in 6 or fewer months a year always count on top.");
+  // 2.16: pay that isn't monthly (Appendix A's paragraph).
+  var ever=patternsEver(c);
+  if(ever)L.push("- **Pay that isn't monthly**: Some people here are paid weekly, every two weeks or every four weeks. The household makes its transfers once a month, on its transfer day. Such a person's saved pay for a month is what arrived since the transfer day before. When one more payday than usual arrived, the household can set it aside: the pay used is the saved pay less what was set aside. In proportion to pay uses each person's pay over a year ÷ 12."+
+    // 2.17 (L16): one sentence more when someone has a recent payday.
+    (hasPaydayDates(c)?" With a recent payday, Dovetail counts each person's paydays between transfer days and sets an extra one aside unless it's counted.":""));
   if(arr(c.flows).length)L.push("- **Changes**: the household changed how it manages its money from "+listAnd(c.flows.map(function(e){return mLabel(e.from)}))+". Months before a change keep the arrangement they had: the saved months and Analysis figures use each month's own arrangement, while the Household section below shows the current one.");
   L.push("");
   h("Household");
-  L.push("Payday: "+paydayText(c.payday)+".","");
-  L.push(mdTable(["Person","Paid into","Usual take-home pay"],c.people.map(function(p){return [p.name||"Unnamed",accountName(c,p.payAccount),n2(p.usualPay)]})));
+  L.push(dayWord(c,true)+": "+paydayText(c.payday)+".","");
+  // 2.16: someone on a pattern: "£1,560.00 every four weeks (about £1,690.00 a month)".
+  L.push(mdTable(["Person","Paid into","Usual take-home pay"],c.people.map(function(p){var t=patternOf(p);return [p.name||"Unnamed",accountName(c,p.payAccount),t?patternWords(t)+" (about "+fmt(usualMonthly(p))+" a month)":n2(p.usualPay)]})));
   var own=boarderAccounts(c);
   L.push(mdTable(["Account","Colour","Leftover goes to"],c.accounts.map(function(a){var up=parentId(c,a.id);return [(a.name||"Unnamed account")+(a.closedFrom?" (closed from "+mShort(a.closedFrom)+")":""),a.colour||"",up?accountName(c,up):own[a.id]?"keeps its leftover (a boarder's own money, not in the float)":"keeps its leftover (float)"]})));
   L.push("Money flow after each account's own bills:","");
@@ -88,7 +110,8 @@ function exportMarkdown(c,months,today,o){o=o||{};var k=defaultMonth(c.payday,to
   h("Bills");
   L.push(mdTable(["Bill","Amount","Months paid","Times a year","Category","Paid from","Renews","Savings","Price history"],c.bills.map(function(b){
     var hist=arr(b.history).filter(function(e){return e&&validDate(e.on)}).map(function(e){return e.on+": "+n2(e.from)+" → "+n2(e.to)}).join("; ");
-    return [b.name||"Unnamed",n2(b.amount),whenText(b),perYear(b),b.category?categoryName(b.category):"",accountName(c,b.account),validDate(b.renews)?b.renews:"",b.savings?"yes":"",hist]})));
+    return [b.name||"Unnamed",n2(b.amount),whenText(b),perYear(b),b.category?categoryName(b.category):"",accountName(c,b.account),validDate(b.renews)?b.renews:"",b.savings?"yes":"",hist]}).concat(
+    figs.map(function(f){return [f.name,n2(f.unlisted),"Every month",12,"",accountName(c,f.account),"","",""]}))));
   h("Spending budgets");
   L.push(mdTable(["Budget","Amount a month","Spent from"],c.budgets.map(function(b){return [b.name||"Budget",n2(b.amount),accountName(c,b.account)]})));
   h("Savings transfers");
@@ -98,21 +121,24 @@ function exportMarkdown(c,months,today,o){o=o||{};var k=defaultMonth(c.payday,to
   h("Saved months");
   // 2.13: each month's shares and board, and its short accounts, as columns only a household that uses them gets.
   var sharesCol=uses.shares||uses.board;
-  L.push(mdTable(["Month"].concat(c.people.map(function(p){return (p.name||"Pay")+" pay"})).concat(["Float","Transfers ticked","One-offs"],sharesCol?["Shares and board"]:[],shortCol?["Short accounts"]:[]),saved.map(function(r){var x=r.k;
+  // 2.16: a household with a pattern gets each month's extra paydays: "Kerry extra payday: £1,560.00 set aside".
+  var extraWords=function(r){return arr(r.extra).map(function(x){var p=personById(c,x.person),nm=(p&&String(p.name||"").trim())||"Someone";return x.not?nm+": not an extra payday":nm+" extra payday: "+fmt(x.amount)+(x.counted?" counted":" set aside")}).join("; ")};
+  L.push(mdTable(["Month"].concat(c.people.map(function(p){return (p.name||"Pay")+" pay"})).concat(["Float","Transfers ticked","One-offs"],sharesCol?["Shares and board"]:[],shortCol?["Short accounts"]:[],ever?["Extra paydays"]:[]),saved.map(function(r){var x=r.k;
     return [mShort(x)].concat(r.pay.map(function(v){return v==null?"not typed":n2(v)})).concat([n2(r.float),r.ticked+" of "+r.steps,
       r.oneOffs.map(function(q){return (q.name||"One-off")+" "+(q.kind==="in"?"+":"-")+n2(q.amount)}).join("; ")],
-      sharesCol?[r.shares.map(function(s){return shareWords(c,s)}).join("; ")]:[],shortCol?[r.named?shortWords(c,r.shortBy,n2):""]:[])})));
+      sharesCol?[r.shares.map(function(s){return shareWords(c,s)}).join("; ")]:[],shortCol?[r.named?shortWords(c,r.shortBy,n2):""]:[],ever?[extraWords(r)]:[])})));
   if(keys.length)L.push("Pay that wasn't typed is estimated as described above; the float uses it.","");
   h("Analysis");
   L.push("### The average month","",
-    "Income "+n2(pic.income)+" a month ("+pic.incomeDetail.people.map(function(p){return (p.name||"Pay")+" "+n2(p.avg)+(p.months?" (average of "+p.months+" typed month"+(p.months===1?"":"s")+")":" (usual pay)")}).join(", ")+(pic.incomeDetail.other?", other income "+n2(pic.incomeDetail.other):"")+(pic.incomeDetail.board?", board "+n2(pic.incomeDetail.board):"")+").","");
+    "Income "+n2(pic.income)+" a month ("+pic.incomeDetail.people.map(function(p){return (p.name||"Pay")+" "+n2(p.avg)+(p.perPay!=null?" (average of "+p.months+" typed month"+(p.months===1?"":"s")+": "+n2(p.perPay)+" a payday)":p.pattern?" (pay over a year ÷ 12: "+n2(p.pattern.each)+" "+everyWords(p.pattern.every)+")":p.months?" (average of "+p.months+" typed month"+(p.months===1?"":"s")+")":" (usual pay)")}).join(", ")+(pic.incomeDetail.other?", other income "+n2(pic.incomeDetail.other):"")+(pic.incomeDetail.board?", board "+n2(pic.incomeDetail.board):"")+").","");
   L.push(mdTable(["","A month","Of income"],[["Bills",n2(pic.bills),pctText(pic.income>0?pic.bills/pic.income:null)],["Spending budgets",n2(pic.budgets),pctText(pic.income>0?pic.budgets/pic.income:null)],
     ["Savings (transfers and bills marked as savings)",n2(pic.saving),pctText(pic.savingsRate)],["Average left over",n2(pic.float),pctText(pic.income>0?pic.float/pic.income:null)]]));
   if(pic.income>0&&pic.shortBy.length)L.push("Short in the average month: "+shortWords(c,pic.shortBy,n2)+". The average left over is after that.","");
   L.push("This month ("+mLabel(k)+"): "+n2(nowR.flt)+" left over"+(shortNamed(nowR)&&isShort(nowR)?"; "+shortWords(c,shortAccounts(nowR),n2):"")+".","");
   var cat=byCategory(c);
   L.push("### Bills by category","","Bills cost "+n2(cat.annual)+" a year ("+n2(cat.monthly)+" a month on average).","");
-  L.push(mdTable(["Category","A year","A month","Share of bills"],cat.groups.map(function(g){return [g.name,n2(g.annual),n2(g.monthly),pctText(g.share)]})));
+  L.push(mdTable(["Category","A year","A month","Share of bills"],cat.groups.map(function(g){return [g.name,n2(g.annual),n2(g.monthly),pctText(g.share)]}).concat(
+    cat.unlisted?[["Not listed yet (rough figures)",n2(cat.unlisted.annual),n2(cat.unlisted.monthly),pctText(cat.unlisted.share)]]:[])));
   var subs=subscriptions(c);if(subs.bills.length)L.push("Subscriptions and memberships: "+n2(subs.annual)+" a year ("+subs.bills.map(function(b){return b.name}).join(", ")+").","");
   var hl=heavyLight(c,months,k,next);
   L.push("### The next 12 months","","Outgoings are bills due, spending budgets, savings transfers and one-off payments. The projected float uses typed pay where there is some, otherwise estimated pay. \"What's different\" lists the bills not paid every month that are due, and any one-offs. Average outgoings "+n2(hl.average)+".","");
@@ -144,22 +170,29 @@ function csvRows(rows){return rows.map(function(r){return r.map(function(x){retu
 function T_(v){return {v:v,t:true}}
 /* Two CSV files: every bill (one row each) and every saved month (one row each). 2.13: a household with shares or board
    also gets what each person paid in that month (<name>_pays_in: shares, set amounts and board; the float leaves it
-   out), and one where an account was short while another kept money gets short_accounts (the float nets it). */
+   out), and one where an account was short while another kept money gets short_accounts (the float nets it). 2.14: each
+   rough figure is a row in the bills file (its amount is what's not listed yet), and a household with a rough figure (now
+   or ended from a month) gets bills_not_listed in the months file. */
 function exportCsv(c,months,today){
   var bills=[["bill","amount","months_paid","times_a_year","yearly_cost","category","paid_from","renews","savings"]].concat(c.bills.map(function(b){
-    return [T_(b.name||""),n2(b.amount),T_(whenText(b)),perYear(b),n2(annualCost(b)),T_(b.category?categoryName(b.category):""),T_(accountName(c,b.account)),validDate(b.renews)?b.renews:"",b.savings?"yes":"no"]}));
-  var uses=householdUses(c),saved=savedMonthKeys(months).map(function(k){return savedMonthRow(c,months,k)}),paysCol=uses.shares||uses.board,shortCol=saved.some(function(r){return r.named&&r.shortBy.length});
-  var mrows=[["month"].concat(c.people.map(function(p){return T_((p.name||"person")+"_pay")})).concat(["float","transfers_ticked","transfers_total","one_off_payments","one_off_income"],
-    paysCol?c.people.map(function(p){return T_((p.name||"person")+"_pays_in")}):[],shortCol?["short_accounts"]:[])].concat(saved.map(function(r){
-    return [r.k].concat(r.pay.map(function(v){return v==null?"":n2(v)})).concat([n2(r.float),r.ticked,r.steps,n2(r.oneOut),n2(r.oneIn)],
-      paysCol?c.people.map(function(p){return n2(sum(r.shares.filter(function(s){return s.person===p.id}),function(s){return s.amt}))}):[],shortCol?[T_(r.named?shortWords(c,r.shortBy,n2):"")]:[])}));
+    return [T_(b.name||""),n2(b.amount),T_(whenText(b)),perYear(b),n2(annualCost(b)),T_(b.category?categoryName(b.category):""),T_(accountName(c,b.account)),validDate(b.renews)?b.renews:"",b.savings?"yes":"no"]}).concat(
+    figureRows(c).map(function(f){return [T_(f.name),n2(f.unlisted),T_("Every month"),12,n2(f.unlisted*12),"",T_(accountName(c,f.account)),"","no"]})));
+  var uses=householdUses(c),saved=savedMonthKeys(months).map(function(k){return savedMonthRow(c,months,k)}),paysCol=uses.shares||uses.board,shortCol=saved.some(function(r){return r.named&&r.shortBy.length}),figCol=hasEstimates(c);
+  // 2.16: for each person on a pattern (now or earlier), <name>_set_aside and <name>_pay_used after the pay columns
+  // (empty when pay wasn't typed).
+  var pi=[];c.people.forEach(function(p,i){if(patternOf(p)||arr(p.was).some(function(w){return !!patternOf(w)}))pi.push(i)});
+  var patCols=function(r){var out=[];pi.forEach(function(i){var t=r.pay[i]!=null&&r.setAside;out.push(t?n2(r.setAside[i]):"",t?n2(r.used[i]):"")});return out};
+  var mrows=[["month"].concat(c.people.map(function(p){return T_((p.name||"person")+"_pay")})).concat(pi.reduce(function(a,i){var n=c.people[i].name||"person";return a.concat([T_(n+"_set_aside"),T_(n+"_pay_used")])},[]),["float","transfers_ticked","transfers_total","one_off_payments","one_off_income"],
+    paysCol?c.people.map(function(p){return T_((p.name||"person")+"_pays_in")}):[],shortCol?["short_accounts"]:[],figCol?["bills_not_listed"]:[])].concat(saved.map(function(r){
+    return [r.k].concat(r.pay.map(function(v){return v==null?"":n2(v)})).concat(patCols(r),[n2(r.float),r.ticked,r.steps,n2(r.oneOut),n2(r.oneIn)],
+      paysCol?c.people.map(function(p){return n2(sum(r.shares.filter(function(s){return s.person===p.id}),function(s){return s.amt}))}):[],shortCol?[T_(r.named?shortWords(c,r.shortBy,n2):"")]:[],figCol?[n2(r.unlisted)]:[])}));
   return {bills:{name:"dovetail-bills-"+today+".csv",text:csvRows(bills)},months:{name:"dovetail-months-"+today+".csv",text:csvRows(mrows)}}}
 
 /* "Share" on the Pay tab (2.7): the month's transfers as plain text, in order, to send to the other person.
    k = the month on screen, r = calc()'s result for it, done = its ticks ({stepId: amount}), payInfo = {estimated:
    [names of people whose pay is estimated]}. */
 function transfersText(c,k,r,done,payInfo){done=done||{};var pd=paydayFor(c.payday,k),L=[],est=arr(payInfo&&payInfo.estimated);
-  L.push("Dovetail transfers for "+mLabel(k)+(pd?" (payday "+DAYS[dow(pd)]+" "+fmtDate(pd)+")":""));
+  L.push("Dovetail transfers for "+mLabel(k)+(pd?" ("+dayWord(c)+" "+DAYS[dow(pd)]+" "+fmtDate(pd)+")":""));
   r.steps.forEach(function(s,i){var d=done[s.id],ticked=d!=null&&d!==false,diff=ticked&&typeof d==="number"?r2(s.amt)-d:0;
     // Ticked at a different amount (pay typed since, say): the difference still has to be sent, as the Pay tab says.
     var changed=Math.abs(diff)>0.004?" (ticked at "+fmt(Math.abs(d))+": "+fmt(Math.abs(diff))+(diff>0?" more to send)":" less now)"):"";

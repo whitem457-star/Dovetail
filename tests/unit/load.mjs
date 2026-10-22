@@ -9,6 +9,14 @@ for (const m of src.matchAll(/^function\s+([A-Za-z0-9_$]+)\s*\(/gm)) names.add(m
 for (const m of src.matchAll(/^var\s+([A-Za-z0-9_$]+)\s*=/gm)) names.add(m[1]);
 for (const m of src.matchAll(/^var\s+[^;]*?,\s*([A-Za-z0-9_$]+)\s*=/gm)) names.add(m[1]);
 export const P = new Function('"use strict";\n' + src + '\nreturn {' + [...names].join(',') + '};')();
+/** A second, separate copy of the page's pure code with `extra` source after it: a later declaration of a function
+    (say bankHolidaysEW) replaces the page's own everywhere, as the last one wins. `inject` names values the extra
+    source can use ({name: value}). The simulation uses it to switch the bank holiday rule (docs/payperiods.md L18). */
+export function loadPage(extra = '', inject = {}) {
+  const keys = Object.keys(inject), all = new Set(names);
+  for (const m of extra.matchAll(/^function\s+([A-Za-z0-9_$]+)\s*\(/gm)) all.add(m[1]);
+  return new Function(...keys, '"use strict";\n' + src + '\n' + extra + '\nreturn {' + [...all].join(',') + '};')(...keys.map(k => inject[k]));
+}
 // The real 1.4 backup (golden tests only; null in the public copy, where they skip) and the made-up one (everything else).
 const readJson = name => { const u = new globalThis.URL('../fixtures/' + name, import.meta.url); return fs.existsSync(u) ? JSON.parse(fs.readFileSync(u, 'utf8')) : null; };
 export const FIXTURE = readJson('household-1.4-backup.json');

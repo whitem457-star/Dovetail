@@ -1,6 +1,7 @@
 // 2.2 reminder notifications, page side (with the stand-in for the Android bridge): the settings, the permission
 // result coming back, the schedule handed to the app, and opening Reminders from a notification.
-import { suite, session, sampleStorage, K, T, LS, axe } from './lib.mjs';
+import { suite, session, sampleStorage, K, T, LS, axe, PAGE } from './lib.mjs';
+import fs from 'fs';
 const { check, finish } = suite('Reminder notifications');
 const st = p => p.evaluate(() => window.__qaNative);
 const ev = (p, type, v, ok) => p.evaluate(([t, v, ok]) => window.paydayNativeEvent(t, v, ok), [type, v, ok]);
@@ -66,6 +67,21 @@ await p.evaluate(() => { window.__qaNative.notifyOn = false; window.__qaSave(); 
 check('Switching off tells the app and stays off', JSON.stringify((await st(p)).calls.filter(c => c[0] === 'notify').pop()) === '["notify",false]' && !(await p.isChecked('#notify_on')) && (await T(p, '#sumNotify')) === 'Off');
 check('No JS errors (app)', p.errs.length === 0, p.errs.join(' | '));
 await ctx.close();
+
+// ---------- 2.16 (E14): a household with someone on a pay pattern has a transfer day ----------
+{ // Jordan (made up), paid £420.00 a week into his current account, which sends £600.00 to Bills.
+  const c = { schema: 5, setupDone: true, lastVersion: /var VERSION="([\d.]+)"/.exec(fs.readFileSync(PAGE, 'utf8'))[1], people: [{ id: 'jordan', name: 'Jordan', payAccount: 'cur', usualPay: 1820, pattern: { every: 7, each: 420 } }],
+    accounts: [{ id: 'cur', name: 'Current account', colour: 'blue', leftoverTo: null }, { id: 'bills', name: 'Bills account', colour: 'purple', leftoverTo: 'cur' }],
+    bills: [{ id: 'rent', name: 'Rent', amount: 600, account: 'bills', months: [] }], income: [], budgets: [], savings: [], reminders: [], doneLog: [], payday: { day: 28, weekend: true } };
+  ({ ctx, p } = await session({ storage: { [K.cfg]: c }, native: true }));
+  await p.click('#t-settings'); await p.click('#sNotify summary'); await p.waitForTimeout(60);
+  check('Pay pattern: Settings says "the day before transfer day"', (await T(p, '#setNotify')).includes('the day before transfer day'));
+  await p.waitForTimeout(2300);
+  const e = (await st(p)).schedule.entries.find(x => x.key.startsWith('pay:'));
+  check('…"Transfer day tomorrow" the day before the 28th, "Wed 28 Oct 2026 is for November 2026. …"', e && e.date === '2026-10-27' && e.title === 'Transfer day tomorrow' && /^Wed 28 Oct 2026 is for November 2026\. \d+ transfers? to make\.$/.test(e.text), JSON.stringify(e));
+  check('…and, if Android delays it, "Transfer day today"', e && e.late && e.late.title === 'Transfer day today' && e.late.text.startsWith('Today, Wed 28 Oct 2026, is for November 2026.'), JSON.stringify(e && e.late));
+  check('No JS errors (pay pattern)', p.errs.length === 0, p.errs.join(' | '));
+  await ctx.close(); }
 
 // ---------- the example household never sends a schedule ----------
 ({ ctx, p } = await session({ native: true }));

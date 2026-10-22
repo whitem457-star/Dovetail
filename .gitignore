@@ -15,3 +15,4 @@ signed/
 .idea/
 tests/sim/out/
 tests/out/
+.claude/worktrees/

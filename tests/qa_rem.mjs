@@ -98,7 +98,8 @@ await ctx.close();
 
 // ---------- 2.4: Reminders by month ----------
 // Payday the 28th, Friday before a weekend. Windows: Oct = 28 Sep–27 Oct, Nov = 28 Oct–26 Nov (December's payday is
-// Fri 27 Nov), Dec = 27 Nov–27 Dec, Jan = 28 Dec–27 Jan. Fixture dates: Leisure Centre 12 Apr 2026 (overdue), Kestrel home
+// Fri 27 Nov), Dec = 27 Nov–23 Dec, Jan = 24 Dec–27 Jan. (2.16.1, payperiods.md 13.1 H5: January's payday moves to Thu 24
+// Dec, as Fri 25 and Mon 28 Dec 2026 are bank holidays, so December's window ends on 23 Dec; changed on purpose.) Fixture dates: Leisure Centre 12 Apr 2026 (overdue), Kestrel home
 // 3 Dec, Lumen 18 Dec, Car 1 MOT 9 Jan 2027, Car 2 MOT 11 Mar 2027.
 const withPay = sampleStorage(false); withPay[K.cfg] = Object.assign({}, withPay[K.cfg], { payday: { day: 28, weekend: true } });
 withPay[K.mon] = { '2026-11': { month: '2026-11', pay: {}, done: {}, oneOffs: [{ id: 'oX', kind: 'out', name: 'Xmas meal', amount: 80, account: 'jbills', date: '2026-11-27' }] } };
@@ -115,7 +116,7 @@ let dm = await T(p, '#dueMonth');
 check('November 2026: its window between paydays, and nothing due', dm.startsWith('In November 2026') && dm.includes('28 Oct to 26 Nov, between paydays') && dm.includes('Nothing due in November 2026.'), dm);
 await goMonth(p, 'December 2026');
 dm = await T(p, '#dueMonth');
-check('December 2026 (27 Nov to 27 Dec): Kestrel home, Lumen and the one-off dated 27 Nov saved under November', dm.includes('27 Nov to 27 Dec, between paydays') && /Xmas meal[\s\S]*Kestrel home[\s\S]*Lumen/.test(dm) && !dm.includes('Car 1 MOT'), dm);
+check('December 2026 (27 Nov to 23 Dec): Kestrel home, Lumen and the one-off dated 27 Nov saved under November', dm.includes('27 Nov to 23 Dec, between paydays') && /Xmas meal[\s\S]*Kestrel home[\s\S]*Lumen/.test(dm) && !dm.includes('Car 1 MOT'), dm);
 check('…with dates and days counted from today, renew/edit/open buttons as before', dm.includes('3 Dec 2026 · in 49 days') && await p.$('#dueMonth .rem .btn.ghost:has-text("Open November 2026")') !== null && await p.$('#dueMonth .rem:has-text("Kestrel") .btn:has-text("Edit")') !== null);
 check('Stepping months changes "In …" but never "Needs attention" or the badge', (await att()) === att0 && (await T(p, '#dueBadge')) === badge0);
 await goMonth(p, 'January 2027');

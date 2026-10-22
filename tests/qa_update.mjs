@@ -8,6 +8,9 @@ const sent = calls => calls.filter(c => ['share', 'shareText', 'shareUpdate', 's
 const { check, finish } = suite('2.10: updates from the other phone');
 const send = (p, v, ok) => p.evaluate(([v, ok]) => window.paydayNativeEvent('import', v, ok), [v, ok]);
 const nat = p => p.evaluate(() => window.__qaNative);
+// Waits (up to 3 s) until the stand-in for the Android bridge has had `count` calls named `name`: a fixed pause after a tap
+// was too short on a slow CI runner (run 212).
+const calledTimes = async (p, name, count) => { for (let i = 0; i < 30; i++) { const n = await nat(p); if (n.calls.filter(c => c[0] === name).length >= count) return; await p.waitForTimeout(100); } };
 const ticks = p => p.$$eval('#steps .step', l => l.map(s => s.classList.contains('done')));
 const focused = p => p.evaluate(() => document.activeElement && (document.activeElement.id || document.activeElement.textContent));
 // The other phone: the same household (the made-up one), with this phone's own look and notification settings.
@@ -39,18 +42,21 @@ check('…nothing is sent until one is chosen', sent((await nat(p)).calls).lengt
 check('No axe violations with the choice showing', (await axe(p)).length === 0, (await axe(p)).join(' | '));
 await p.keyboard.press('Tab');
 check('Keyboard: Tab from the title reaches the two choices in order', (await p.evaluate(() => document.activeElement.id)) === 'shareAsText' && (await p.keyboard.press('Tab'), await p.evaluate(() => document.activeElement.id)) === 'shareAsFile');
-await p.click('#shareAsText'); await p.waitForTimeout(150);
+const textsBefore = (await nat(p)).calls.filter(c => c[0] === 'shareText').length;
+await p.click('#shareAsText'); await calledTimes(p, 'shareText', textsBefore + 1);
 n = await nat(p);
 check('"Send the transfers as a message" sends the text only', n.calls[n.calls.length - 1][0] === 'shareText' && n.calls.filter(c => c[0] === 'shareUpdate').length === 1 &&
   String(n.lastText).startsWith('Dovetail transfers for ' + month + '\n1. ') && !String(n.lastText).includes('Tap the file'));
 await p.click('#shareTransfers'); await p.waitForTimeout(150); await p.click('#sheetClose'); await p.waitForTimeout(150);
 check('Close sends nothing', sent((await nat(p)).calls).length === sent(n.calls).length && !(await p.isVisible('#sheet')));
 // If the app can't prepare the file, it says so (the choice was the file, so no text goes instead).
+const prevCalls = (await nat(p)).calls;
 await p.evaluate(() => { window.__qaNative.updateFails = true; window.__qaSave(); });
 await p.click('#shareTransfers'); await p.waitForTimeout(150); await p.click('#shareAsFile');
 await p.waitForFunction(() => document.getElementById('toast').textContent === "Couldn't prepare the update file.", null, { timeout: 3000 }).catch(() => {});
 n = await nat(p);
-check('If the file can\'t be prepared, it says so and sends nothing else', n.calls[n.calls.length - 1][0] === 'shareUpdate' && (await T(p, '#toast')) === "Couldn't prepare the update file.", JSON.stringify([n.calls.slice(-2), await T(p, '#toast')]));
+// The last thing sent is the failed update file (an automatic backup, "save", can land in between under load: not a send).
+check('If the file can\'t be prepared, it says so and sends nothing else', sent(n.calls)[sent(n.calls).length - 1][0] === 'shareUpdate' && sent(n.calls).length === sent(prevCalls).length + 1 && (await T(p, '#toast')) === "Couldn't prepare the update file.", JSON.stringify([n.calls.slice(-2), await T(p, '#toast')]));
 await p.evaluate(() => { window.__qaNative.updateFails = false; window.__qaSave(); });
 const sentTicks = await ticks(p), sentFloat = await p.textContent('#heroFloat'), sentProgress = await T(p, '#progressText');
 check('No JS errors (sending)', p.errs.length === 0, p.errs.join(' | '));

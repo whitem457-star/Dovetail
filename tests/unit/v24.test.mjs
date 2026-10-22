@@ -8,7 +8,8 @@ const PAY28 = { day: 28, weekend: true };
 
 test('month window: payday 28th, Friday before a weekend', () => {
   assert.deepEqual(P.monthWindow(PAY28, '2026-11'), { from: '2026-10-28', to: '2026-11-26' }, 'December is funded on Fri 27 Nov');
-  assert.deepEqual(P.monthWindow(PAY28, '2026-12'), { from: '2026-11-27', to: '2026-12-27' }, 'January is funded on Mon 28 Dec');
+  // 2.16.1 changed this on purpose: Mon 28 Dec 2026 is the Boxing Day bank holiday, so January is funded on Thu 24 Dec.
+  assert.deepEqual(P.monthWindow(PAY28, '2026-12'), { from: '2026-11-27', to: '2026-12-23' }, 'January is funded on Thu 24 Dec');
   // The windows tile: each starts the day after the last one ends.
   let k = '2026-01';
   for (let i = 0; i < 24; i++, k = P.shiftMonth(k, 1)) {
@@ -26,7 +27,9 @@ test('month windows tile for every payday setting, without gaps or overlaps', ()
     for (let i = 0; i < 28; i++, k = P.shiftMonth(k, 1)) {   // Nov 2027 to Feb 2030, so leap-year February 2028 is in
       const a = P.monthWindow(pc, k), b = P.monthWindow(pc, P.shiftMonth(k, 1));
       assert.equal(P.addDays(a.to, 1), b.from, JSON.stringify(pc) + ' ' + k);
-      assert.ok(a.from <= a.to && P.daysUntil(a.to, a.from) >= 26 && P.daysUntil(a.to, a.from) <= 33, JSON.stringify(pc) + ' ' + k + ' ' + JSON.stringify(a));
+      // 2.16.1 widened 33 to 34 on purpose: a bank holiday can move a payday up to 4 days. Over every month 2000–2049 the
+      // range is 23–34; over this test's months the shortest is still 26.
+      assert.ok(a.from <= a.to && P.daysUntil(a.to, a.from) >= 26 && P.daysUntil(a.to, a.from) <= 34, JSON.stringify(pc) + ' ' + k + ' ' + JSON.stringify(a));
     }
   }
 });

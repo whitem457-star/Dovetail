@@ -1,7 +1,8 @@
 # Everything build.sh checks: page, web tests, JVM tests, lint, a release APK and app bundle, and the permission check.
 # On main (pushed or run by hand) it also signs the APK and the app bundle (for Google Play) with the release key from
 # the repository's secrets (PAYDAY_KEYSTORE_BASE64, PAYDAY_KEYSTORE_PASS), checks both are signed with the same
-# certificate as every earlier release, and attaches them to the run as Dovetail-v<version>. Other branches never see the key.
+# certificate as every earlier release, attaches them to the run as Dovetail-v<version> (kept 90 days) and publishes them
+# as the GitHub Release v<version> (kept for good; the second job, which never sees the key). Other branches never see the key.
 name: CI
 
 on:
@@ -19,6 +20,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    outputs:
+      version: ${{ steps.signed.outputs.version }}
     env:
       HAS_KEY: ${{ secrets.PAYDAY_KEYSTORE_BASE64 != '' && secrets.PAYDAY_KEYSTORE_PASS != '' }}
       # SHA-256 of the release certificate (CN=Payday Transfers), the same in every release so far.
@@ -152,3 +155,33 @@ jobs:
             tests/shots/
             tests/out/
           if-no-files-found: ignore
+
+  # The signed files, kept for good: a GitHub Release named v<version> (the tag is made here, on main's commit), with the
+  # APK and the app bundle from the job above. Only this job may write to the repository, and it never has the key.
+  release:
+    needs: build
+    if: github.ref == 'refs/heads/main' && needs.build.outputs.version != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Dovetail-v${{ needs.build.outputs.version }}
+          path: signed
+      - name: Publish the GitHub Release v<version> with the signed APK and app bundle
+        run: |
+          ls -l signed
+          # A rerun on the same version replaces the files rather than failing.
+          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "v$VERSION" --repo "$GITHUB_REPOSITORY" --clobber "signed/Dovetail-v$VERSION.apk" "signed/Dovetail-v$VERSION.aab"
+          else
+            gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Dovetail $VERSION" \
+              --notes "Signed APK (install over the top) and app bundle (for Google Play) for Dovetail $VERSION. What changed: CHANGELOG.md." \
+              "signed/Dovetail-v$VERSION.apk" "signed/Dovetail-v$VERSION.aab"
+          fi
+          echo "GitHub Release v$VERSION published with the signed APK and app bundle" >> "$GITHUB_STEP_SUMMARY"

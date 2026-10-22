@@ -2,11 +2,14 @@
 // shared account (never one person's or a boarder's) and asks only for amounts it uses; a household with a boarder
 // doesn't count the boarder's own money as its left over; a joint account that's short is named, and a top-up from an
 // account with nothing in it isn't a transfer to make. Made-up households only.
-import { suite, session, K, LS, T, axe, noSideScroll, household, steps, skipTour } from './lib.mjs';
+import { suite, session, K, LS, T, axe, noSideScroll, household, steps, skipTour, PAGE } from './lib.mjs';
+import fs from 'fs';
 const { check, finish } = suite('2.12.1: fixes from the household simulation');
 const TODAY = '2026-10-21';
 const selText = (p, sel) => p.$eval(sel, s => s.options[s.selectedIndex].text);
 const focusId = p => p.evaluate(() => document.activeElement && document.activeElement.id);
+/** 2.14: the budgets and savings step is drawn by account: the account a row (su_g_0, say) is typed in. */
+const inAcct = (p, row) => p.$eval('#' + row + '_n', e => e.closest('[data-acct]').getAttribute('data-acct'));
 
 /** Setup up to step 4 with these people ([name, usual pay]), no payday. Returns the messages shown on the way. */
 async function toStep4(p, people, income) {
@@ -27,17 +30,20 @@ await toStep4(p, [['Alex', '3000'], ['Sam', '2000']], ['Child Benefit', '110']);
 await p.check('#su_style_contribute'); await p.check('#su_rule_pay'); await p.waitForTimeout(60);
 check('Each paying into a joint account: other income goes into the joint account', (await selText(p, '#su_ia_0')) === 'Joint account', await selText(p, '#su_ia_0'));
 await toSpend(p);
-check('…and a budget and a savings transfer are kept in it', (await selText(p, '#su_g_0_s')) === 'Joint account' && (await selText(p, '#su_v_0_s')) === 'Joint account', await selText(p, '#su_g_0_s'));
+check('…and a budget and a savings transfer are kept in it', (await inAcct(p, 'su_g_0')) === 'Joint account' && (await inAcct(p, 'su_v_0')) === 'Joint account', await inAcct(p, 'su_g_0'));
 await p.click('#su_addg'); await p.waitForTimeout(40);
-check('…a budget added there too', (await selText(p, '#su_g_1_s')) === 'Joint account');
-await p.selectOption('#su_g_1_s', { label: "Alex's account" }); await p.fill('#su_g_1_n', 'Fuel'); await p.fill('#su_g_1_a', '80');
+check('…a budget added there too', (await inAcct(p, 'su_g_1')) === 'Joint account');
+// 2.14: a budget of Alex's own is added in Alex's account (its line in the step), not moved there with a select.
+await p.click('[data-acct="Alex\'s account"] button[id^="su_addg_"]'); await p.waitForTimeout(40);
+check('…and one added in Alex\'s account is kept there', (await inAcct(p, 'su_g_2')) === "Alex's account" && (await focusId(p)) === 'su_g_2_n');
+await p.fill('#su_g_2_n', 'Fuel'); await p.fill('#su_g_2_a', '80');
 // Back to the questions: one of us pays the bills (Sam). Budgets nobody moved follow; the one moved by hand stays.
 await p.click('#su_back'); await p.click('#su_back'); await p.waitForTimeout(60);
 await p.check('#su_style_housekeeping'); await p.check('#su_payer_1'); await p.check('#su_rule_sameLeft'); await p.waitForTimeout(60);
 check('One of us paying the bills (Sam): other income follows to Sam\'s account', (await selText(p, '#su_ia_0')) === "Sam's account", await selText(p, '#su_ia_0'));
 await toSpend(p);
-check('…so do the budget and savings nobody moved; the one moved by hand stays', (await selText(p, '#su_g_0_s')) === "Sam's account" && (await selText(p, '#su_v_0_s')) === "Sam's account" && (await selText(p, '#su_g_1_s')) === "Alex's account",
-  [await selText(p, '#su_g_0_s'), await selText(p, '#su_g_1_s')].join(' | '));
+check('…so do the budget and savings nobody moved; the one added in Alex\'s account stays', (await inAcct(p, 'su_g_0')) === "Sam's account" && (await inAcct(p, 'su_v_0')) === "Sam's account" && (await inAcct(p, 'su_g_2')) === "Alex's account",
+  [await inAcct(p, 'su_g_0'), await inAcct(p, 'su_g_2')].join(' | '));
 check('No JS errors (defaults)', p.errs.length === 0, p.errs.join(' | '));
 await ctx.close();
 
@@ -74,7 +80,7 @@ check('No axe violations (board questions)', (await axe(p)).length === 0, (await
 await p.click('#su_next'); await p.waitForTimeout(60);
 await p.fill('#setup .su-bsec .qa-row input[id$="_0_n"]', 'Rent'); await p.fill('#setup .su-bsec .qa-row input[id$="_0_a"]', '1200');
 await p.click('#su_next'); await p.waitForTimeout(60);
-check('A budget and a savings transfer start in the joint account, not Kit\'s', (await selText(p, '#su_g_0_s')) === 'Joint account' && (await selText(p, '#su_v_0_s')) === 'Joint account');
+check('A budget and a savings transfer start in the joint account, not Kit\'s', (await inAcct(p, 'su_g_0')) === 'Joint account' && (await inAcct(p, 'su_v_0')) === 'Joint account');
 await p.fill('#su_g_0_n', 'Food shopping'); await p.fill('#su_g_0_a', '500');
 await p.click('#su_next'); await p.waitForTimeout(60);
 check('The first payday: what\'s left is the household\'s, without Kit\'s own money', (await T(p, '#su_left')).replace(/\s+/g, ' ').includes('£3,300.00'), await T(p, '#su_left'));
@@ -149,19 +155,22 @@ const ownTwo = () => household({ lastVersion: '2.12.1', payday: { day: 28, weeke
 ({ ctx, p } = await session({ today: TODAY, storage: { [K.cfg]: ownTwo() } }));
 await p.click('#t-settings'); await p.click('#sPeople summary'); await p.waitForTimeout(80);
 check('Settings › People: "Pays board" for Kit, whose own account keeps what\'s left, with its hint linked', await p.isVisible('#pp_b_kit') && (await p.getAttribute('#pp_b_kit', 'aria-describedby')) === 'pp_b_kit_h');
+check('…and the hint says what board is first', (await T(p, '#pp_b_kit_h')).startsWith('Board is a set amount each month towards the household, as a grown-up child living at home might pay. '), await T(p, '#pp_b_kit_h'));
 await p.check('#pp_b_kit'); await p.waitForTimeout(150);
 check('…ticking it saves and keeps focus on it', (await LS(p, K.cfg)).people[1].boarder === true && (await focusId(p)) === 'pp_b_kit');
 await p.click('#t-pay'); await p.waitForTimeout(100);
 check('…and the top card is the household\'s left over (£2,300.00), without Kit\'s', (await p.textContent('#heroFloat')) === '£2,300.00', await p.textContent('#heroFloat'));
 await ctx.close();
 
-// Updating from before 2.12 (straight from 2.11) shows 2.12's lines too; from 2.12, this version's and 2.12.1's.
+// Updating from before 2.12 (straight from 2.11) shows 2.12's lines too; from 2.12, this version's, 2.14.1's, 2.14's, 2.13's and 2.12.1's
+// (three lines each; 2.14.1 and 2.15 have one; 2.16 and 2.16.1 three; 2.17 two; 2.18 one). The version now is read from the built page.
+const VER = /var VERSION="([\d.]+)"/.exec(fs.readFileSync(PAGE, 'utf8'))[1];
 for (const [from, more] of [['2.11', true], ['2.12', false]]) {
   const h = ownTwo(); h.lastVersion = from;
   ({ ctx, p } = await session({ today: TODAY, storage: { [K.cfg]: h } }));
   const t = await T(p, '#whatsNew');
   const heads = await p.$$eval('#whatsNew b', l => l.map(b => b.textContent));
-  check(`What's new after updating from ${from}: ${more ? 'with' : 'without'} 2.12's lines`, t.includes("What's new in 2.13") && heads.includes('In 2.12') === more && heads.includes('In 2.12.1') && (await p.$$('#whatsNew li')).length === (more ? 9 : 6), t);
+  check(`What's new after updating from ${from}: ${more ? 'with' : 'without'} 2.12's lines`, t.includes("What's new in " + VER) && heads.includes('In 2.12') === more && heads.includes('In 2.12.1') && heads.includes('In 2.13') && heads.includes('In 2.14') && heads.includes('In 2.14.1') && (await p.$$('#whatsNew li')).length === (more ? 23 : 20), t);
   await ctx.close();
 }
 

@@ -49,8 +49,8 @@ android {
         applicationId = "uk.whiteboard.payday"
         minSdk = 29
         targetSdk = 36
-        versionCode = 22
-        versionName = "2.13"
+        versionCode = 29
+        versionName = "2.18"
     }
 
     signingConfigs {

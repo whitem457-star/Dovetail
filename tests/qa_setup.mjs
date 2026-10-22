@@ -18,16 +18,20 @@ const focusId = () => p.evaluate(() => document.activeElement.id);
 const title = () => T(p, '#suTitle');
 const txt = () => T(p, '#setup');
 const sel = (s) => p.$eval(s, e => e.selectedOptions[0].textContent);
+/** 2.14: the budgets and savings step is drawn by account: the account a row (su_g_0, say) is typed in. */
+const inAcct = row => p.$eval('#' + row + '_n', e => e.closest('[data-acct]').getAttribute('data-acct'));
 /** The bill names typed in one account's section of the bills step (sec: the section's heading id). */
 const rowNames = sec => p.$$eval(`section[aria-labelledby=${sec}] .qa-row input[id$="_n"]`, l => l.map(x => x.value).filter(Boolean));
 check('A new install opens on setup, with no tab bar or month bar', await p.isVisible('#tab-setup') && await p.isHidden('#tabbar') && await p.isHidden('#monthBar') && await p.isHidden('#tab-pay'));
-check('Step 1 welcomes, with "Step 1 of 7" and the three ways in', (await title()) === 'Welcome to Dovetail' && (await txt()).includes('Step 1 of 7') &&
-  (await txt()).includes('Setting up takes about five minutes') && await p.isVisible('#su_start') && await p.isVisible('#su_restore summary') && await p.isVisible('#su_example') && (await T(p, '#su_later')) === 'Skip setup for now');
+// 2.18: the welcome is a doorway, not a step: no "Step n of N" (setup counts six steps from pay; qa_welcome.mjs has the rest).
+check('Step 1 welcomes, with no step counter, the setup note and the three ways in', (await title()) === 'Payday, without the guesswork' && !/Step \d+ of \d+/.test(await txt()) &&
+  (await txt()).includes('About five minutes to set up, and you can change anything later.') && await p.isVisible('#su_start') && await p.isVisible('#su_restore summary') && await p.isVisible('#su_example') && (await T(p, '#su_later')) === 'Skip setup for now');
 check('Nothing is saved before setup is finished', (await LS(p, K.cfg)) === null);
 await p.click('#su_start'); await p.waitForTimeout(50);
-check('Step 2 is pay, with focus on its title and "Step 2 of 7"', (await title()) === 'Your pay' && (await focusId()) === 'suTitle' && (await txt()).includes('Step 2 of 7'));
+check('Step 2 is pay, with focus on its title and "Step 1 of 6"', (await title()) === 'Your pay' && (await focusId()) === 'suTitle' && (await txt()).includes('Step 1 of 6'));
 check('…explaining take-home pay in plain words', (await txt()).includes("Take-home pay is the money that actually reaches your bank account, after tax, National Insurance and pension.") &&
-  (await txt()).includes("Paid a different amount each month? Use a typical month.") && (await txt()).includes('Not employed?'));
+  (await txt()).includes("Dovetail works in pounds. Pay can come monthly, every four weeks, every two weeks or weekly. Paid a different amount each time? Use a typical amount: you'll type what actually arrived.") &&
+  (await txt()).includes('Not employed? Use what you usually receive, such as a pension or self-employed income. Universal Credit is paid monthly:'));
 check('…with Back, Next and Finish later, but no Skip (pay is the point)', await p.isVisible('#su_back') && await p.isVisible('#su_next') && await p.isVisible('#su_later') && (await p.$('#su_skip')) === null);
 await p.fill('#su_p_0', 'Alex'); await p.fill('#su_pu_0', '2100'); await p.click('#su_addp'); await p.waitForTimeout(50);
 check('Adding someone focuses the new name box', (await focusId()) === 'su_p_1');
@@ -126,7 +130,12 @@ await p.click('#su_next'); await p.waitForTimeout(50);
 const heads = await p.$$eval('#setup .su-bsec h2, #setup .su-bline b', l => l.map(x => x.textContent));
 check('Step 5: bills account by account, in the order money moves', (await title()) === 'Your bills' && JSON.stringify(heads) === JSON.stringify(["Alex's account", "Sam's account", 'Paid from Joint bills', 'Joint spending']), JSON.stringify(heads));
 check('…Joint bills (nobody\'s paid into it, and it passes what\'s left on) opens with three rows; the others are links', (await p.$$('section[aria-labelledby=su_h_b2] .qa-row')).length === 3 && await p.isVisible('#su_b_0_open') && await p.isVisible('#su_b_1_open') && await p.isVisible('#su_b_3_open'));
-check('…with the bank-statement tip and suggestions', (await txt()).includes('Payments marked DD (Direct Debit) or SO (Standing Order) are usually regular bills.') && (await p.$$('section[aria-labelledby=su_h_b2] .su-chips button')).length === 12 && (await p.$('#setup .su-chips button[aria-pressed]')) === null);
+// 2.14: the help is one tap away ("How do I find my bills?"); the six most common suggestions show (rent or mortgage
+// counting as one), and the rest are in groups that open with a tap.
+check('…with the bank-statement tip behind a link', !(await txt()).includes('Payments marked DD') && (await p.getAttribute('#su_find', 'aria-expanded')) === 'false');
+await p.click('#su_find'); await p.waitForTimeout(40);
+check('…and suggestions', (await txt()).includes('Payments marked DD (Direct Debit) or SO (Standing Order) are usually regular bills.') && (await p.getAttribute('#su_find', 'aria-expanded')) === 'true' && (await focusId()) === 'su_find' &&
+  (await p.$$('section[aria-labelledby=su_h_b2] .su-chips button')).length === 7 && (await p.$$('section[aria-labelledby=su_h_b2] .su-more button[aria-expanded="false"]')).length === 7 && (await p.$('#setup .su-chips button[aria-pressed]')) === null);
 const chip = n => p.click(`section[aria-labelledby=su_h_b2] .su-chips button:has-text("${n}")`);
 await chip('Mortgage'); await p.waitForTimeout(50);
 check('A suggestion fills the first empty row and moves to its amount; its chip goes', (await p.inputValue('#su_b_2_0_n')) === 'Mortgage' && (await focusId()) === 'su_b_2_0_a' && !(await T(p, 'section[aria-labelledby=su_h_b2] .su-chips')).includes('Mortgage'));
@@ -134,7 +143,9 @@ await p.keyboard.type('925'); await chip('Council Tax'); await p.waitForTimeout(
 check('Council Tax is set to "Some months", April to January', (await p.inputValue('#su_b_2_1_f')) === 'some' && JSON.stringify(await p.$$eval('#su_b_2_1_m .mbtn', b => b.map(x => x.getAttribute('aria-pressed') === 'true' ? 1 : 0))) === '[1,0,0,1,1,1,1,1,1,1,1,1]');
 await p.keyboard.type('168'); await chip('TV Licence'); await p.waitForTimeout(50);
 check('TV Licence is "Once a year", with focus on the month to pick', (await p.inputValue('#su_b_2_2_f')) === 'yearly' && (await focusId()) === 'su_b_2_2_m' && (await p.inputValue('#su_b_2_2_m')) === '');
-await p.fill('#su_b_2_2_a', '174.50'); await chip('Car insurance'); await p.waitForTimeout(50);
+await p.fill('#su_b_2_2_a', '174.50'); await p.click('#su_b_2_g_transport'); await p.waitForTimeout(50);
+check('A group of suggestions opens with a tap, keeping focus on it', (await p.getAttribute('#su_b_2_g_transport', 'aria-expanded')) === 'true' && (await focusId()) === 'su_b_2_g_transport' && await p.isVisible('#su_b_2_gc button[data-name="car insurance"]'));
+await chip('Car insurance'); await p.waitForTimeout(50);
 check('No empty row left: a suggestion adds one', (await p.$$('section[aria-labelledby=su_h_b2] .qa-row')).length === 4 && (await p.inputValue('#su_b_2_3_n')) === 'Car insurance');
 await p.fill('#su_b_2_3_a', '420'); await p.selectOption('#su_b_2_3_m', '3');
 for (const m of [1, 4, 5, 6, 7, 8, 9, 10, 11, 12]) await p.click('#su_b_2_1_m_' + m);
@@ -149,7 +160,7 @@ await p.keyboard.type('Mobile phone'); await p.fill('#su_b_0_0_a', '18'); await 
 check('Enter on the last amount adds a row and moves to it', (await focusId()) === 'su_b_0_1_n');
 const chipShown = (sec, n) => p.isVisible(`section[aria-labelledby=${sec}] .su-chips button[data-name="${n}"]`);
 check('A typed name hides its suggestion in that section', !(await chipShown('su_h_b0', 'mobile phone')) && await chipShown('su_h_b0', 'gym'));
-await p.fill('#su_b_0_1_n', '  GYM '); await p.waitForTimeout(30);
+await p.click('#su_b_2_g_subs'); await p.fill('#su_b_0_1_n', '  GYM '); await p.waitForTimeout(30);
 check('…as it\'s typed, whatever the capitals and spaces, and only in that section', !(await chipShown('su_h_b0', 'gym')) && await chipShown('su_h_b2', 'gym'));
 await p.click('#su_next'); await p.waitForTimeout(50);
 check('A bill with a name and no amount is flagged', (await T(p, '#su_msg')).includes('Each bill needs a name and an amount') && (await focusId()) === 'su_b_0_1_a');
@@ -158,7 +169,7 @@ check('…and comes back when the row goes', await chipShown('su_h_b0', 'gym'));
 await p.click('#su_next'); await p.waitForTimeout(50);
 // step 6
 check('Step 6: spending budgets and savings transfers, with suggestions and tips', (await title()) === 'Spending and saving' && (await txt()).includes('Not sure how much? Look at what you spent last month') && (await txt()).includes('Many people start with an emergency fund'));
-check('…kept in and sent from the account that keeps what\'s left', (await sel('#su_g_0_s')) === 'Joint spending' && (await sel('#su_v_0_s')) === 'Joint spending');
+check('…kept in and sent from the account that keeps what\'s left', (await inAcct('su_g_0')) === 'Joint spending' && (await inAcct('su_v_0')) === 'Joint spending');
 await p.click('section[aria-labelledby=su_h_g] .su-chips button:has-text("Food shopping")'); await p.waitForTimeout(50);
 check('A suggestion fills the budget\'s name and moves to its amount', (await p.inputValue('#su_g_0_n')) === 'Food shopping' && (await focusId()) === 'su_g_0_a');
 await p.keyboard.type('520');
@@ -346,7 +357,7 @@ check('Removing Joint spending (it kept what\'s left): Joint bills keeps it now,
 await p.click('#su_next'); await p.waitForTimeout(50);
 check('…its bills move to Joint bills too', JSON.stringify(await rowNames('su_h_b2')) === JSON.stringify(['Mortgage', 'Council Tax', 'Car insurance', 'Streaming']) && JSON.stringify(await rowNames('su_h_b0')) === JSON.stringify(['Mobile phone']), JSON.stringify([await rowNames('su_h_b0'), await rowNames('su_h_b2')]));
 await p.click('#su_next'); await p.waitForTimeout(50);
-check('…and so do the budget and the savings transfer', (await sel('#su_g_0_s')) === 'Joint bills' && (await sel('#su_v_0_s')) === 'Joint bills', JSON.stringify([await sel('#su_g_0_s'), await sel('#su_v_0_s')]));
+check('…and so do the budget and the savings transfer', (await inAcct('su_g_0')) === 'Joint bills' && (await inAcct('su_v_0')) === 'Joint bills', JSON.stringify([await inAcct('su_g_0'), await inAcct('su_v_0')]));
 await p.click('#su_later'); await p.waitForTimeout(250); await skipTour(p);
 cfgA = await LS(p, K.cfg);
 const jb = cfgA.accounts.find(a => a.name === 'Joint bills').id;
@@ -565,7 +576,7 @@ check('…clears the reminders on the phone (an empty schedule)', st.schedule &&
 check('…and leaves app lock and notifications alone', !st.calls.some(c => c[0] === 'lock' || c[0] === 'notify') && st.lockOn === true);
 check('The household and its months are gone (the settings keep only this phone\'s appearance and notifications); the old Wealth data isn\'t', JSON.stringify(await LS(p, K.cfg)) === JSON.stringify({ schema: 5, appearance: before.cfg.appearance, notify: before.cfg.notify }) &&
   (await LS(p, K.mon)) === null && (await p.evaluate(k => localStorage.getItem(k), K.w)) === before.w, JSON.stringify(await LS(p, K.cfg)));
-check('Setup starts again, with focus on its title', await p.isVisible('#tab-setup') && await p.isHidden('#tabbar') && (await T(p, '#suTitle')) === 'Welcome to Dovetail' && (await p.evaluate(() => document.activeElement.id)) === 'suTitle');
+check('Setup starts again, with focus on its title', await p.isVisible('#tab-setup') && await p.isHidden('#tabbar') && (await T(p, '#suTitle')) === 'Payday, without the guesswork' && (await p.evaluate(() => document.activeElement.id)) === 'suTitle');
 check('…offering to bring back what was there', (await T(p, '#restoreOfferSetup')).startsWith('Bring back what you had before?') && (await T(p, '#restoreOfferSetup')).includes('Restore backup') && (await T(p, '#restoreOfferSetup')).includes('Start fresh'));
 await p.waitForTimeout(2700); st = await p.evaluate(() => window.__qaNative);
 check('Nothing is backed up or scheduled while setup waits', !st.calls.some(c => c[0] === 'save') && st.calls.filter(c => c[0] === 'schedule').length === 1);
@@ -619,7 +630,7 @@ let re = await startAgainThenReopen();
 ({ ctx, p } = re);
 check('(set-up) dark, larger text and notifications at 18:30 with amounts, before Start again', re.was.look === 'dark,large' && JSON.stringify(re.was.cfg.notify) === JSON.stringify(MINE.notify) && re.was.float === '£267.02', JSON.stringify(re.was));
 check('Start again keeps only this phone\'s settings: no household, no setupDone', JSON.stringify(re.kept) === JSON.stringify({ schema: 5, ...MINE }), JSON.stringify(re.kept));
-check('Reopened before setup finished: setup, still dark with larger text', await p.isVisible('#tab-setup') && (await T(p, '#suTitle')) === 'Welcome to Dovetail' && (await re.look()) === 'dark,large', await re.look());
+check('Reopened before setup finished: setup, still dark with larger text', await p.isVisible('#tab-setup') && (await T(p, '#suTitle')) === 'Payday, without the guesswork' && (await re.look()) === 'dark,large', await re.look());
 check('…and the app is told "dark", never "system"', JSON.stringify(re.calls.filter(c => c[0] === 'theme')) === '[["theme","dark"]]', JSON.stringify(re.calls));
 check('…with the backup it kept offered', (await T(p, '#restoreOfferSetup')).includes('Found an automatic backup from') && (await T(p, '#restoreOfferSetup')).includes('Restore backup') && (await T(p, '#restoreOfferSetup')).includes('Start fresh'), await T(p, '#restoreOfferSetup'));
 await p.waitForTimeout(1800);

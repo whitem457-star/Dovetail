@@ -204,3 +204,16 @@ test('review fixes: categories, chart ticks, bad history entries, savings counte
   P.setSavingsFlag(b, false); assert.equal(b.savingsSince, undefined);
   P.setCategory(b, 'savings', '2026-11'); assert.equal(b.savingsSince, '2026-11');
 });
+
+test('2.15: predictedFloat reads usual pay as it was that month, so a dated edit leaves an earlier month\'s prediction alone', () => {
+  const c = household({ payday: { day: 28 },
+    people: [{ id: 'a', name: 'Ana', payAccount: 'A', usualPay: 2000 }, { id: 'b', name: 'Ben', payAccount: 'B', usualPay: 0 }],
+    accounts: [{ id: 'A', name: 'A', colour: 'blue', leftoverTo: null }, { id: 'B', name: 'B', colour: 'green', leftoverTo: null }],
+    bills: [{ id: 'rent', name: 'Rent', amount: 900, account: 'A', months: [] }] });
+  const months = { '2026-10': { pay: { a: 2000, b: 300 } } };
+  assert.equal(P.predictedFloat(c, months, '2026-10'), null, 'Ben had no usual pay: nothing to predict from');
+  const ben = c.people[1], before = P.personSnap(ben); ben.usualPay = 1500;
+  assert.equal(P.datePersonEdit(ben, before, '2026-11'), true);
+  assert.equal(P.predictedFloat(c, months, '2026-10'), null, 'October still had no usual pay for Ben');
+  assert.notEqual(P.predictedFloat(c, months, '2026-11'), null, 'November uses the new usual pay');
+});
